@@ -1,0 +1,15 @@
+<Project>
+  <!-- Propriedades compartilhadas por todos os projetos .NET do desktop -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Authors>ESousa97</Authors>
+    <Product>ClipBridge</Product>
+    <Company>ClipBridge</Company>
+    <Copyright>Copyright © 2026 ESousa97</Copyright>
+    <NeutralLanguage>pt-BR</NeutralLanguage>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+  </PropertyGroup>
+</Project>

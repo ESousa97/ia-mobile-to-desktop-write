@@ -1,0 +1,38 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-ci.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-ci.yml'
+
+jobs:
+  build:
+    name: Build debug APK (Kotlin · Compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # O gradle-wrapper.jar não é versionado; materializamos o wrapper com o
+      # Gradle pré-instalado no runner (ver mobile/README.md).
+      - name: Bootstrap Gradle wrapper
+        working-directory: mobile
+        run: gradle wrapper --gradle-version 8.11.1 --no-daemon
+
+      - name: Build debug APK
+        working-directory: mobile
+        run: ./gradlew assembleDebug --no-daemon --stacktrace

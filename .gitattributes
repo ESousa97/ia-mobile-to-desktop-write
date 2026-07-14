@@ -1,0 +1,36 @@
+# Normaliza fim de linha para evitar ruído em diffs entre Windows/Linux/macOS
+* text=auto eol=lf
+
+# Scripts específicos de plataforma preservam o fim de linha nativo
+*.bat        text eol=crlf
+*.cmd        text eol=crlf
+*.ps1        text eol=crlf
+gradlew      text eol=lf
+*.sh         text eol=lf
+
+# Código-fonte
+*.cs         text diff=csharp
+*.xaml       text
+*.kt         text
+*.kts        text
+*.xml        text
+*.json       text
+*.md         text
+*.yml        text
+*.yaml       text
+*.toml       text
+
+# Binários (nunca fazer diff/merge textual)
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.ico        binary
+*.webp       binary
+*.jar        binary
+*.keystore   binary
+*.pfx        binary
+*.p12        binary
+
+# Marca artefatos gerados para estatísticas de linguagem do GitHub (linguist)
+gradlew      linguist-generated
+gradlew.bat  linguist-generated
