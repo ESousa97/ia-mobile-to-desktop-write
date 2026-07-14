@@ -5,10 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.esousa.clipbridge.clipboard.ClipboardRepository
 import com.esousa.clipbridge.discovery.DiscoveredDesktop
-import com.esousa.clipbridge.discovery.NsdDiscovery
+import com.esousa.clipbridge.discovery.UdpDiscovery
 import com.esousa.clipbridge.net.ClipBridgeClient
 import com.esousa.clipbridge.net.ConnectionState
-import com.esousa.clipbridge.security.PairingInvitation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,7 +25,7 @@ data class HomeUiState(
  */
 class ClipBridgeViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val discovery = NsdDiscovery(application)
+    private val discovery = UdpDiscovery()
     private val client = ClipBridgeClient()
     private val clipboard = ClipboardRepository(application)
 
@@ -36,6 +35,7 @@ class ClipBridgeViewModel(application: Application) : AndroidViewModel(applicati
     init {
         observeDiscovery()
         observeConnection()
+        discovery.start()
     }
 
     private fun observeDiscovery() = viewModelScope.launch {
@@ -61,12 +61,13 @@ class ClipBridgeViewModel(application: Application) : AndroidViewModel(applicati
 
     fun connectTo(desktop: DiscoveredDesktop) = client.connect(desktop.host, desktop.port)
 
-    fun pair(qrPayload: String) {
-        runCatching { PairingInvitation.parse(qrPayload) }
-            .onSuccess(client::pair)
-            .onFailure { error ->
-                _uiState.value = _uiState.value.copy(statusLabel = "QR inválido: ${error.message}")
-            }
+    fun confirmPairing(code: String) {
+        val desktop = _uiState.value.discovered.firstOrNull()
+        if (desktop == null) {
+            _uiState.value = _uiState.value.copy(statusLabel = "Nenhum desktop encontrado na rede")
+            return
+        }
+        client.pair(desktop.host, desktop.port, code)
     }
 
     override fun onCleared() {

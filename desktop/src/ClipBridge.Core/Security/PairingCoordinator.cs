@@ -4,64 +4,44 @@ using ClipBridge.Core.Protocol;
 
 namespace ClipBridge.Core.Security;
 
-/// <summary>Convite temporário que é codificado no QR Code do desktop.</summary>
-public sealed record PairingInvitation(
-    string Host,
-    int Port,
-    string PublicKey,
-    string Fingerprint,
-    string Token,
-    DateTimeOffset ExpiresAt)
-{
-    public string ToQrCodePayload() =>
-        $"clipbridge://pair?host={Uri.EscapeDataString(Host)}&port={Port}&pubKey={Uri.EscapeDataString(PublicKey)}" +
-        $"&fingerprint={Uri.EscapeDataString(Fingerprint)}&token={Uri.EscapeDataString(Token)}" +
-        $"&expiresAt={ExpiresAt.ToUnixTimeMilliseconds()}";
-}
+/// <summary>Código temporário exibido pelo desktop para autorizar o pareamento.</summary>
+public sealed record PairingInvitation(string PairingCode, DateTimeOffset ExpiresAt);
 
 /// <summary>
-/// Mantém o material efêmero de um convite de pareamento e valida seu token
+/// Mantém o material efêmero de um convite de pareamento e valida seu código
 /// de uso único.
 /// </summary>
 public sealed class PairingCoordinator : IDisposable
 {
     public static readonly TimeSpan DefaultLifetime = TimeSpan.FromMinutes(5);
     public static readonly byte[] SessionKeyInfo = "clipbridge-v1-session"u8.ToArray();
+    public const int MaxFailedAttempts = 5;
 
     private readonly X25519KeyAgreement _keyAgreement = new();
-    private readonly byte[] _tokenHash;
+    private readonly byte[] _codeHash;
+    private int _failedAttempts;
     private bool _consumed;
     private bool _disposed;
 
     public PairingInvitation Invitation { get; }
 
-    public PairingCoordinator(string host, int port, TimeSpan? lifetime = null)
+    public PairingCoordinator(TimeSpan? lifetime = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(host);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(port);
-
         var effectiveLifetime = lifetime ?? DefaultLifetime;
         if (effectiveLifetime <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(lifetime), "A validade do convite deve ser positiva.");
         }
 
-        var tokenBytes = RandomNumberGenerator.GetBytes(32);
-        var token = Convert.ToBase64String(tokenBytes);
-        _tokenHash = SHA256.HashData(tokenBytes);
-        CryptographicOperations.ZeroMemory(tokenBytes);
+        var pairingCode = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+        _codeHash = SHA256.HashData(Encoding.ASCII.GetBytes(pairingCode));
 
         Invitation = new PairingInvitation(
-            host,
-            port,
-            Convert.ToBase64String(_keyAgreement.PublicKey.Span),
-            _keyAgreement.Fingerprint,
-            token,
+            pairingCode,
             DateTimeOffset.UtcNow.Add(effectiveLifetime));
     }
 
-    public PairResponsePayload CreateResponse() =>
-        new(Convert.ToBase64String(_keyAgreement.PublicKey.Span), _keyAgreement.Fingerprint);
+    public PairResponsePayload CreateResponse() => new(Convert.ToBase64String(_keyAgreement.PublicKey.Span));
 
     public byte[] DeriveSessionKey(PairRequestPayload request)
     {
@@ -78,36 +58,31 @@ public sealed class PairingCoordinator : IDisposable
         return _keyAgreement.DeriveSessionKey(peerPublicKey, salt, SessionKeyInfo);
     }
 
-    public bool TryConfirmToken(string token)
+    public bool TryConfirmCode(string? code)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_consumed || DateTimeOffset.UtcNow >= Invitation.ExpiresAt)
+        if (_consumed || DateTimeOffset.UtcNow >= Invitation.ExpiresAt ||
+            string.IsNullOrEmpty(code) || code.Length != 6 || !code.All(char.IsAsciiDigit))
         {
             return false;
         }
 
-        byte[] suppliedToken;
-        try
+        var suppliedCodeHash = SHA256.HashData(Encoding.ASCII.GetBytes(code));
+        var valid = CryptographicOperations.FixedTimeEquals(_codeHash, suppliedCodeHash);
+        CryptographicOperations.ZeroMemory(suppliedCodeHash);
+        if (valid)
         {
-            suppliedToken = Convert.FromBase64String(token);
-        }
-        catch (FormatException)
-        {
-            return false;
+            _consumed = true;
+            return true;
         }
 
-        try
+        _failedAttempts++;
+        if (_failedAttempts >= MaxFailedAttempts)
         {
-            var suppliedHash = SHA256.HashData(suppliedToken);
-            var valid = CryptographicOperations.FixedTimeEquals(_tokenHash, suppliedHash);
-            CryptographicOperations.ZeroMemory(suppliedHash);
-            _consumed = valid;
-            return valid;
+            _consumed = true;
         }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(suppliedToken);
-        }
+
+        return false;
     }
 
     public void Dispose()
@@ -118,7 +93,7 @@ public sealed class PairingCoordinator : IDisposable
         }
 
         _keyAgreement.Dispose();
-        CryptographicOperations.ZeroMemory(_tokenHash);
+        CryptographicOperations.ZeroMemory(_codeHash);
         _disposed = true;
     }
 }

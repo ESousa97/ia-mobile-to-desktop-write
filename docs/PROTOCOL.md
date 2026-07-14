@@ -2,7 +2,7 @@
 
 Protocolo de aplicação sobre **WebSocket**. Mensagens de controle são **JSON (texto)**; grandes blobs (imagens) usam **frames binários** referenciados por id.
 
-Após o handshake, **todo payload é cifrado com AES-256-GCM** (ver [`SECURITY-DESIGN.md`](SECURITY-DESIGN.md)). O envelope abaixo descreve o payload em claro (o que existe *dentro* da cifra).
+Após o handshake, **todo payload é cifrado com AES-256-GCM** (ver [`SECURITY-DESIGN.md`](SECURITY-DESIGN.md)). O envelope abaixo descreve o payload em claro (o que existe *dentro* da cifra). No fio, o campo `payload` trafega como `{ "ct": "<base64 do pacote GCM>" }`; metadados (`v`, `type`, `id`, `ts`) ficam em claro. AAD = `type|id`.
 
 ## Envelope
 
@@ -22,8 +22,8 @@ Após o handshake, **todo payload é cifrado com AES-256-GCM** (ver [`SECURITY-D
 |---|---|---|---|
 | `hello` | ambos | `{ device, platform, appVersion }` | Apresentação inicial pós-conexão |
 | `pair.request` | mobile→desktop | `{ pubKey, nonce }` | Início do handshake (chave pública efêmera) |
-| `pair.response` | desktop→mobile | `{ pubKey, fingerprint }` | Resposta do handshake + fingerprint p/ verificação |
-| `pair.confirm` | mobile→desktop | `{ token }` | Confirma o pareamento com o token do QR |
+| `pair.response` | desktop→mobile | `{ pubKey }` | Resposta do handshake |
+| `pair.confirm` | mobile→desktop | `{ code }` | Confirma o pareamento com o código exibido no desktop |
 | `clipboard.text` | ambos | `{ text, mime }` | Novo texto na área de transferência |
 | `clipboard.image` | ambos | `{ blobId, mime, width, height, bytes }` | Imagem (metadados; bytes via frames binários) |
 | `screenshot` | desktop→mobile | `{ blobId, mime, width, height, monitors }` | Captura de tela em alta resolução |
@@ -62,15 +62,11 @@ DISCONNECTED → CONNECTING → HELLO → PAIRING → SECURE ⇄ (mensagens) →
 - Mensagens de dados (`clipboard.*`, `screenshot`, `blob.*`) só são aceitas no estado **SECURE**.
 - Heartbeat (`ping`/`pong`) a cada 15s; 3 falhas → reconecta.
 
-## QR de pareamento
+## Descoberta e pareamento
 
-O desktop gera um convite efêmero no formato URI abaixo e o codifica como QR Code:
+O mobile envia `clipbridge.discover.v1` por UDP na porta `8788`; o desktop responde com `clipbridge.announce.v1:{porta-websocket}`. Em builds de debug do Android, o emulador também consulta `10.0.2.2` (alias da máquina host).
 
-```text
-clipbridge://pair?host={host}&port={port}&pubKey={base64}&fingerprint={sha256-12-hex}&token={base64}&expiresAt={epoch-millis}
-```
-
-O mobile valida o `fingerprint` recebido em `pair.response` contra o valor do QR antes de enviar `pair.confirm`. O `token` tem 32 bytes aleatórios, expira em cinco minutos e é aceito somente uma vez. O desktop só envia `ack` depois de validar o token; ambos os lados então passam ao estado `SECURE`. Mensagens de aplicação recebidas antes desse estado retornam `error { code: "auth.failed" }`.
+O desktop gera um código numérico aleatório de seis dígitos, expira em cinco minutos e só pode ser usado uma vez. Após **cinco tentativas inválidas**, o convite é invalidado. O mobile envia o código em `pair.confirm` depois do handshake de chave efêmera. O desktop só envia `ack` depois de validar o código; ambos os lados então passam ao estado `SECURE`. Mensagens de aplicação recebidas antes desse estado retornam `error { code: "auth.failed" }`.
 
 ## Versionamento
 
@@ -80,8 +76,7 @@ O campo `v` permite evolução. Um par negocia a maior versão comum no `hello`.
 
 | `code` | Significado |
 |---|---|
-| `auth.failed` | Handshake/token inválido |
-| `auth.fingerprint` | Fingerprint não confere (possível MITM) |
+| `auth.failed` | Handshake/código inválido ou convite expirado |
 | `blob.checksum` | SHA-256 do blob não confere |
 | `blob.toolarge` | Blob acima do limite configurado |
 | `proto.unsupported` | Versão de protocolo incompatível |

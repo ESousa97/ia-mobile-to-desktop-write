@@ -8,53 +8,59 @@ namespace ClipBridge.Core.Tests;
 public class PairingCoordinatorTests
 {
     [Fact]
-    public void Invitation_ContainsEphemeralPublicKeyAndExpiry()
+    public void Invitation_ContainsCodeAndExpiry()
     {
-        using var pairing = new PairingCoordinator("192.168.1.20", 8787);
+        using var pairing = new PairingCoordinator();
 
-        Assert.Equal("192.168.1.20", pairing.Invitation.Host);
-        Assert.Equal(8787, pairing.Invitation.Port);
-        Assert.Equal(X25519KeyAgreement.PublicKeySizeBytes, Convert.FromBase64String(pairing.Invitation.PublicKey).Length);
+        Assert.Matches("^[0-9]{6}$", pairing.Invitation.PairingCode);
         Assert.True(pairing.Invitation.ExpiresAt > DateTimeOffset.UtcNow);
     }
 
     [Fact]
-    public void Invitation_QrCodePayloadContainsAllPairingParameters()
+    public void TryConfirmCode_AcceptsValidCodeOnlyOnce()
     {
-        using var pairing = new PairingCoordinator("desktop.local", 8787);
+        using var pairing = new PairingCoordinator();
 
-        var payload = pairing.Invitation.ToQrCodePayload();
-
-        Assert.StartsWith("clipbridge://pair?", payload);
-        Assert.Contains("host=desktop.local", payload);
-        Assert.Contains("port=8787", payload);
-        Assert.Contains("pubKey=", payload);
-        Assert.Contains("fingerprint=", payload);
-        Assert.Contains("token=", payload);
-        Assert.Contains("expiresAt=", payload);
+        Assert.False(pairing.TryConfirmCode("000000"));
+        Assert.True(pairing.TryConfirmCode(pairing.Invitation.PairingCode));
+        Assert.False(pairing.TryConfirmCode(pairing.Invitation.PairingCode));
     }
 
     [Fact]
-    public void TryConfirmToken_AcceptsValidTokenOnlyOnce()
+    public void TryConfirmCode_RejectsMalformedCode()
     {
-        using var pairing = new PairingCoordinator("desktop", 8787);
+        using var pairing = new PairingCoordinator();
 
-        Assert.False(pairing.TryConfirmToken(Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))));
-        Assert.True(pairing.TryConfirmToken(pairing.Invitation.Token));
-        Assert.False(pairing.TryConfirmToken(pairing.Invitation.Token));
+        Assert.False(pairing.TryConfirmCode("12ab56"));
+        Assert.False(pairing.TryConfirmCode("12345"));
+    }
+
+    [Fact]
+    public void TryConfirmCode_LocksOutAfterMaxFailedAttempts()
+    {
+        using var pairing = new PairingCoordinator();
+        var validCode = pairing.Invitation.PairingCode;
+
+        for (var attempt = 0; attempt < PairingCoordinator.MaxFailedAttempts - 1; attempt++)
+        {
+            Assert.False(pairing.TryConfirmCode("000000"));
+        }
+
+        Assert.False(pairing.TryConfirmCode("000000"));
+        Assert.False(pairing.TryConfirmCode(validCode));
     }
 
     [Fact]
     public void DeriveSessionKey_UsesPairRequestNonceAsHkdfSalt()
     {
-        using var pairing = new PairingCoordinator("desktop", 8787);
+        using var pairing = new PairingCoordinator();
         using var mobile = new X25519KeyAgreement();
         var nonce = RandomNumberGenerator.GetBytes(32);
         var request = new PairRequestPayload(Convert.ToBase64String(mobile.PublicKey.Span), Convert.ToBase64String(nonce));
 
         var desktopKey = pairing.DeriveSessionKey(request);
         var mobileKey = mobile.DeriveSessionKey(
-            Convert.FromBase64String(pairing.Invitation.PublicKey),
+            Convert.FromBase64String(pairing.CreateResponse().PubKey),
             nonce,
             PairingCoordinator.SessionKeyInfo);
 
@@ -64,7 +70,7 @@ public class PairingCoordinatorTests
     [Fact]
     public void DeriveSessionKey_RejectsNonceWithUnexpectedLength()
     {
-        using var pairing = new PairingCoordinator("desktop", 8787);
+        using var pairing = new PairingCoordinator();
         using var mobile = new X25519KeyAgreement();
         var request = new PairRequestPayload(Convert.ToBase64String(mobile.PublicKey.Span), Convert.ToBase64String(new byte[16]));
 

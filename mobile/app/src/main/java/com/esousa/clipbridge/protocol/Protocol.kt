@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonObject
 object Protocol {
     const val VERSION = 1
     const val DEFAULT_PORT = 8787
-    const val SERVICE_TYPE = "_clipbridge._tcp"
+    const val DISCOVERY_PORT = 8788
 }
 
 object MessageType {
@@ -45,19 +45,19 @@ data class PairRequestPayload(
 )
 
 @Serializable
-data class PairResponsePayload(
-    val pubKey: String,
-    val fingerprint: String,
-)
+data class PairResponsePayload(val pubKey: String)
 
 @Serializable
-data class PairConfirmPayload(val token: String)
+data class PairConfirmPayload(val code: String)
 
 @Serializable
 data class AckPayload(val ackId: String)
 
 @Serializable
 data class ErrorPayload(val code: String, val message: String)
+
+@Serializable
+data class EncryptedPayload(val ct: String)
 
 @Serializable
 data class ClipboardTextPayload(

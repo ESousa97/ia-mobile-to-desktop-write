@@ -1,8 +1,8 @@
 namespace ClipBridge.Core.Discovery;
 
 /// <summary>
-/// Anúncio do serviço na LAN via mDNS/DNS-SD (<c>_clipbridge._tcp</c>), para que
-/// o celular descubra o desktop sem digitar IP.
+/// Anúncio/resposta do serviço na LAN (atualmente UDP na porta 8788; mDNS planejado),
+/// para que o celular descubra o desktop sem digitar IP.
 /// </summary>
 public interface IDiscoveryService : IDisposable
 {

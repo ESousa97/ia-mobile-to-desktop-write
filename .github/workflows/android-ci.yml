@@ -27,12 +27,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # O gradle-wrapper.jar não é versionado; materializamos o wrapper com o
-      # Gradle pré-instalado no runner (ver mobile/README.md).
-      - name: Bootstrap Gradle wrapper
+      - name: Build and test
         working-directory: mobile
-        run: gradle wrapper --gradle-version 8.11.1 --no-daemon
-
-      - name: Build debug APK
-        working-directory: mobile
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleDebug testDebugUnitTest --no-daemon --stacktrace

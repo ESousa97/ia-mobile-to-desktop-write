@@ -33,8 +33,8 @@ Além disso, o app de desktop traz dois superpoderes acionados por atalho global
 - 📸 **Screenshots em alta definição** com zoom/pan no celular
 - ⌨️ **Digitação simulada** do conteúdo copiado em qualquer lugar do desktop
 - 🔒 **Criptografia ponta-a-ponta** (AES-256-GCM) — nem em LAN o tráfego fica exposto
-- 📡 **Descoberta automática** via mDNS/NSD — sem digitar IP
-- 🔗 **Pareamento por QR Code** — seguro e à prova de erro
+- 📡 **Descoberta automática** via broadcast UDP — sem digitar IP
+- 🔗 **Pareamento por código** — digite o código de 6 dígitos exibido no desktop
 - 🎨 **UI nativa e polida** — Fluent Design (Windows 11) e Material 3 (Android)
 - 🚫 **Zero nuvem** — nada trafega fora da sua rede local
 
@@ -45,11 +45,11 @@ Além disso, o app de desktop traz dois superpoderes acionados por atalho global
 │   ClipBridge Desktop    │  ←── WebSocket + AES-GCM ──→ │   ClipBridge Mobile     │
 │   (Windows · .NET 9)    │                              │   (Android · Kotlin)    │
 │                         │                              │                         │
-│  • Servidor WebSocket   │   descoberta via mDNS        │  • Cliente WebSocket    │
-│  • Clipboard watcher    │   pareamento via QR          │  • Clipboard watcher    │
+│  • Servidor WebSocket   │   descoberta via UDP         │  • Cliente WebSocket    │
+│  • Clipboard watcher    │   pareamento por código      │  • Clipboard watcher    │
 │  • Hotkeys globais      │                              │  • Visualizador de      │
 │  • Captura de tela      │                              │    screenshots (HD)     │
-│  • Digitação (SendInput)│                              │  • Scanner de QR        │
+│  • Digitação (SendInput)│                              │                         │
 └────────────────────────┘                              └────────────────────────┘
 ```
 
@@ -94,7 +94,7 @@ Abra a pasta `mobile/` no Android Studio, deixe o Gradle sincronizar e rode no e
 - [x] Scaffold do desktop (.NET 9 + WPF/Fluent) com esqueleto dos serviços
 - [x] Scaffold do mobile (Kotlin + Compose/Material 3)
 - [x] CI (build desktop + android)
-- [x] Handshake de pareamento (X25519 + QR) e sessão cifrada
+- [x] Handshake de pareamento (X25519 + código de 6 dígitos) e sessão cifrada
 - [ ] Sync de clipboard de texto
 - [ ] Sync de clipboard de imagens
 - [ ] Captura e envio de screenshots em alta resolução

@@ -9,19 +9,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.PhotoCamera
-import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -29,8 +31,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -42,19 +45,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun HomeScreen(viewModel: ClipBridgeViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var scannerVisible by rememberSaveable { mutableStateOf(false) }
-
-    if (scannerVisible) {
-        PairingScanner(
-            onScanned = { qrPayload ->
-                scannerVisible = false
-                viewModel.pair(qrPayload)
-            },
-            onDismiss = { scannerVisible = false },
-        )
-        return
-    }
-
     Scaffold(
         topBar = { TopAppBar(title = { Text("ClipBridge") }) },
     ) { innerPadding ->
@@ -67,6 +57,11 @@ fun HomeScreen(viewModel: ClipBridgeViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             StatusCard(status = state.statusLabel)
+
+            PairingCodeCard(
+                desktopFound = state.discovered.isNotEmpty(),
+                onConfirm = viewModel::confirmPairing,
+            )
 
             FeatureCard(
                 icon = Icons.Rounded.ContentPaste,
@@ -89,9 +84,43 @@ fun HomeScreen(viewModel: ClipBridgeViewModel) {
                 onSearch = viewModel::startDiscovery,
             )
 
-            Button(onClick = { scannerVisible = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("Escanear QR de pareamento", modifier = Modifier.padding(start = 8.dp))
+        }
+    }
+}
+
+@Composable
+private fun PairingCodeCard(
+    desktopFound: Boolean,
+    onConfirm: (String) -> Unit,
+) {
+    var code by rememberSaveable { mutableStateOf("") }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("Parear dispositivo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (desktopFound) {
+                    "Desktop encontrado. Digite o código de 6 dígitos exibido no ClipBridge Desktop."
+                } else {
+                    "Procurando um ClipBridge Desktop na rede local."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            OutlinedTextField(
+                value = code,
+                onValueChange = { value ->
+                    if (value.length <= 6 && value.all(Char::isDigit)) code = value
+                },
+                label = { Text("Código de autenticação") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            )
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { onConfirm(code) }, enabled = desktopFound && code.length == 6) {
+                    Text("Autenticar")
+                }
             }
         }
     }

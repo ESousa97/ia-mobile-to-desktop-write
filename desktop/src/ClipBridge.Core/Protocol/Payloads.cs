@@ -5,9 +5,9 @@ public sealed record HelloPayload(string Device, string Platform, string AppVers
 
 public sealed record PairRequestPayload(string PubKey, string Nonce);
 
-public sealed record PairResponsePayload(string PubKey, string Fingerprint);
+public sealed record PairResponsePayload(string PubKey);
 
-public sealed record PairConfirmPayload(string Token);
+public sealed record PairConfirmPayload(string Code);
 
 public sealed record ClipboardTextPayload(string Text, string Mime = "text/plain; charset=utf-8");
 
@@ -24,3 +24,6 @@ public sealed record TypeTextPayload(string Text);
 public sealed record AckPayload(string AckId);
 
 public sealed record ErrorPayload(string Code, string Message);
+
+/// <summary>Payload cifrado no fio (AES-256-GCM, base64).</summary>
+public sealed record EncryptedPayload(string Ct);

@@ -1,17 +1,19 @@
 package com.esousa.clipbridge.net
 
 import com.esousa.clipbridge.protocol.Envelope
+import com.esousa.clipbridge.protocol.SecureEnvelope
 import com.esousa.clipbridge.protocol.AckPayload
 import com.esousa.clipbridge.protocol.MessageType
 import com.esousa.clipbridge.protocol.PairConfirmPayload
 import com.esousa.clipbridge.protocol.PairResponsePayload
-import com.esousa.clipbridge.security.PairingInvitation
 import com.esousa.clipbridge.security.PairingManager
 import com.esousa.clipbridge.security.SessionCipher
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -46,23 +48,23 @@ class ClipBridgeClient(
 
     fun connect(host: String, port: Int) = connect(host, port, null)
 
-    fun pair(invitation: PairingInvitation) {
-        val request = runCatching { pairingManager.createRequest(invitation) }
+    fun pair(host: String, port: Int, code: String) {
+        val request = runCatching { pairingManager.createRequest() }
             .getOrElse { error ->
-                _connectionState.tryEmit(ConnectionState.Error(error.message ?: "QR Code de pareamento inválido"))
+                _connectionState.tryEmit(ConnectionState.Error(error.message ?: "Não foi possível iniciar o pareamento"))
                 return
             }
-        connect(invitation.host, invitation.port, envelope(MessageType.PAIR_REQUEST, request))
+        connect(host, port, envelope(MessageType.PAIR_REQUEST, request), code)
     }
 
-    private fun connect(host: String, port: Int, pairingRequest: Envelope?) {
+    private fun connect(host: String, port: Int, pairingRequest: Envelope?, pairingCode: String? = null) {
         val request = Request.Builder()
             .url("ws://$host:$port/")
             .build()
 
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (pairingRequest is null) {
+                if (pairingRequest == null) {
                     _connectionState.tryEmit(ConnectionState.Connected(host, port))
                 } else if (webSocket.send(json.encodeToString(Envelope.serializer(), pairingRequest))) {
                     _connectionState.tryEmit(ConnectionState.Pairing(host, port))
@@ -74,7 +76,7 @@ class ClipBridgeClient(
             override fun onMessage(webSocket: WebSocket, text: String) {
                 runCatching { json.decodeFromString<Envelope>(text) }
                     .getOrNull()
-                    ?.let { handleIncoming(webSocket, it, host, port) }
+                    ?.let { handleIncoming(webSocket, it, host, port, pairingCode) }
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -90,7 +92,8 @@ class ClipBridgeClient(
 
     fun send(envelope: Envelope): Boolean {
         val socket = webSocket ?: return false
-        return socket.send(json.encodeToString(Envelope.serializer(), envelope))
+        val wire = sessionCipher?.let { SecureEnvelope.encrypt(envelope, it, json) } ?: envelope
+        return socket.send(json.encodeToString(Envelope.serializer(), wire))
     }
 
     fun disconnect() {
@@ -102,12 +105,21 @@ class ClipBridgeClient(
         _connectionState.tryEmit(ConnectionState.Disconnected)
     }
 
-    private fun handleIncoming(webSocket: WebSocket, envelope: Envelope, host: String, port: Int) {
+    private fun handleIncoming(
+        webSocket: WebSocket,
+        envelope: Envelope,
+        host: String,
+        port: Int,
+        pairingCode: String?,
+    ) {
         runCatching {
             when (envelope.type) {
                 MessageType.PAIR_RESPONSE -> {
                     val response = json.decodeFromJsonElement<PairResponsePayload>(requireNotNull(envelope.payload))
-                    val confirmation = envelope(MessageType.PAIR_CONFIRM, pairingManager.createConfirmation(response))
+                    val confirmation = envelope(
+                        MessageType.PAIR_CONFIRM,
+                        pairingManager.createConfirmation(response, requireNotNull(pairingCode)),
+                    )
                     check(webSocket.send(json.encodeToString(Envelope.serializer(), confirmation))) {
                         "Não foi possível confirmar o pareamento."
                     }
@@ -130,8 +142,12 @@ class ClipBridgeClient(
                     pendingConfirmationId = null
                 }
 
-                else -> if (sessionCipher is not null) {
-                    _incoming.tryEmit(envelope)
+                else -> if (sessionCipher != null) {
+                    runCatching { SecureEnvelope.decrypt(envelope, sessionCipher!!, json) }
+                        .onSuccess { _incoming.tryEmit(it) }
+                        .onFailure { error ->
+                            _connectionState.tryEmit(ConnectionState.Error(error.message ?: "Falha ao decifrar mensagem"))
+                        }
                 }
             }
         }.onFailure { error ->
@@ -141,11 +157,11 @@ class ClipBridgeClient(
         }
     }
 
-    private fun <T> envelope(type: String, payload: T): Envelope = Envelope(
+    private inline fun <reified T> envelope(type: String, payload: T): Envelope = Envelope(
         type = type,
         id = UUID.randomUUID().toString().replace("-", ""),
         timestamp = System.currentTimeMillis(),
-        payload = json.encodeToJsonElement(payload),
+        payload = json.encodeToJsonElement(payload).jsonObject,
     )
 
     companion object {

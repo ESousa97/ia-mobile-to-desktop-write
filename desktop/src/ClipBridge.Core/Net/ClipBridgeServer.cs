@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.WebSockets;
+using System.Net.Sockets;
 using System.Text;
 using ClipBridge.Core.Protocol;
 using ClipBridge.Core.Security;
@@ -22,7 +23,9 @@ public sealed class ClipBridgeServer : IAsyncDisposable
     private readonly object _pairingLock = new();
     private CancellationTokenSource? _cts;
     private Task? _acceptLoop;
+    private Task? _discoveryLoop;
     private PairingCoordinator? _pairing;
+    private UdpClient? _discoverySocket;
 
     /// <summary>Disparado quando um envelope é recebido de um cliente.</summary>
     public event EventHandler<Envelope>? MessageReceived;
@@ -52,12 +55,14 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         _cts = new CancellationTokenSource();
         _listener.Start();
         _acceptLoop = Task.Run(() => AcceptLoopAsync(_cts.Token));
+        _discoverySocket = new UdpClient(ProtocolInfo.DiscoveryPort);
+        _discoveryLoop = Task.Run(() => DiscoveryLoopAsync(_cts.Token));
     }
 
-    /// <summary>Cria um convite temporário para ser exibido como QR Code no desktop.</summary>
-    public PairingInvitation BeginPairing(string host, TimeSpan? lifetime = null)
+    /// <summary>Gera um código temporário exibido pelo desktop para o pareamento.</summary>
+    public PairingInvitation BeginPairing(TimeSpan? lifetime = null)
     {
-        var pairing = new PairingCoordinator(host, _port, lifetime);
+        var pairing = new PairingCoordinator(lifetime);
         lock (_pairingLock)
         {
             _pairing?.Dispose();
@@ -89,6 +94,33 @@ public sealed class ClipBridgeServer : IAsyncDisposable
             }
 
             _ = Task.Run(() => HandleClientAsync(context, ct), ct);
+        }
+    }
+
+    private async Task DiscoveryLoopAsync(CancellationToken ct)
+    {
+        var socket = _discoverySocket ?? throw new InvalidOperationException("Descoberta não inicializada.");
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var request = await socket.ReceiveAsync(ct).ConfigureAwait(false);
+                if (Encoding.UTF8.GetString(request.Buffer) != "clipbridge.discover.v1")
+                {
+                    continue;
+                }
+
+                var response = Encoding.UTF8.GetBytes($"clipbridge.announce.v1:{_port}");
+                await socket.SendAsync(response, request.RemoteEndPoint, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
         }
     }
 
@@ -160,7 +192,23 @@ public sealed class ClipBridgeServer : IAsyncDisposable
                             continue;
                         }
 
-                        MessageReceived?.Invoke(this, envelope);
+                        if (sessionCipher is null)
+                        {
+                            await SendAsync(socket, Envelope.Create(
+                                MessageType.Error,
+                                new ErrorPayload("auth.failed", "Sessão segura indisponível.")), ct).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        if (!SecureEnvelopeCodec.TryDecrypt(envelope, sessionCipher, out var decrypted))
+                        {
+                            await SendAsync(socket, Envelope.Create(
+                                MessageType.Error,
+                                new ErrorPayload("auth.failed", "Payload inválido ou não cifrado.")), ct).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        MessageReceived?.Invoke(this, decrypted);
                     }
                 }
                 // TODO(roadmap): montar blobs binários (blob.chunk) e roteá-los.
@@ -226,12 +274,12 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         }
 
         var confirmation = envelope.PayloadAs<PairConfirmPayload>();
-        var accepted = confirmation is not null && TryConsumePairingToken(confirmation.Token);
+        var accepted = confirmation is not null && TryConsumePairingCode(confirmation.Code);
         if (!accepted)
         {
             await SendAsync(socket, Envelope.Create(
                 MessageType.Error,
-                new ErrorPayload("auth.failed", "Token de pareamento inválido ou expirado.")), ct).ConfigureAwait(false);
+                new ErrorPayload("auth.failed", "Código de pareamento inválido ou expirado.")), ct).ConfigureAwait(false);
             return false;
         }
 
@@ -239,11 +287,11 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         return true;
     }
 
-    private bool TryConsumePairingToken(string token)
+    private bool TryConsumePairingCode(string code)
     {
         lock (_pairingLock)
         {
-            return _pairing?.TryConfirmToken(token) ?? false;
+            return _pairing?.TryConfirmCode(code) ?? false;
         }
     }
 
@@ -258,6 +306,8 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         }
 
         await _cts.CancelAsync().ConfigureAwait(false);
+        _discoverySocket?.Dispose();
+        _discoverySocket = null;
         if (_listener.IsListening)
         {
             _listener.Stop();
@@ -268,6 +318,18 @@ public sealed class ClipBridgeServer : IAsyncDisposable
             try
             {
                 await _acceptLoop.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Ignorado no shutdown.
+            }
+        }
+
+        if (_discoveryLoop is not null)
+        {
+            try
+            {
+                await _discoveryLoop.ConfigureAwait(false);
             }
             catch
             {

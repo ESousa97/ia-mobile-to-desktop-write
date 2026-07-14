@@ -8,7 +8,7 @@ O ClipBridge trata a área de transferência — que frequentemente contém senh
 ┌───────────────────────────────────────────────────────────────┐
 │ 5. Higiene de segredos  → nada de chaves/keystores no Git       │
 │ 4. Menor privilégio     → só as permissões necessárias          │
-│ 3. Autorização          → só dispositivos pareados; token/sessão│
+│ 3. Autorização          → só dispositivos pareados; código/sessão │
 │ 2. Confidencialidade    → AES-256-GCM (E2E) em todo payload     │
 │ 1. Confinamento de rede → bind em LAN; sem exposição à internet │
 └───────────────────────────────────────────────────────────────┘
@@ -30,9 +30,10 @@ O ClipBridge trata a área de transferência — que frequentemente contém senh
 ## 3. Autenticação e autorização
 
 ### Pareamento
-- O desktop exibe um **QR Code** contendo: `host`, `porta`, **chave pública**, **fingerprint** e um **token de pareamento** de uso único (expira em minutos).
-- O celular escaneia, executa o handshake e confirma com o token.
-- O **fingerprint** (hash da chave pública, exibido também em texto) permite verificação visual anti-**MITM**: os dois lados mostram o mesmo código curto.
+- O desktop exibe um **código numérico de 6 dígitos** (expira em 5 minutos, uso único).
+- O celular descobre o desktop na LAN via **broadcast UDP** e envia o código em `pair.confirm` após o handshake X25519.
+- Após **5 tentativas inválidas**, o convite é invalidado e um novo código deve ser gerado no desktop.
+- **Limite conhecido:** o código de 6 dígitos não autentica a chave pública do desktop fora de banda (diferente do esquema anterior por QR+fingerprint). O modelo assume LAN semiconfiável; veja [`THREAT-MODEL.md`](THREAT-MODEL.md).
 
 ### Sessões
 - Após pareado, o dispositivo guarda a chave pública do par (**TOFU** — trust on first use) e um identificador de dispositivo.
@@ -44,7 +45,6 @@ O ClipBridge trata a área de transferência — que frequentemente contém senh
 | Plataforma | Permissão | Uso |
 |---|---|---|
 | Android | `INTERNET` | Conexão WebSocket na LAN |
-| Android | `CAMERA` | Apenas para escanear o QR de pareamento |
 | Android | `POST_NOTIFICATIONS` | Notificação do serviço em foreground |
 | Windows | Sem elevação | Hotkeys, clipboard, captura e `SendInput` não exigem admin |
 
@@ -59,7 +59,7 @@ Nenhuma permissão de localização, contatos, armazenamento amplo, etc.
 
 ## Considerações e limites conhecidos (fase atual)
 
-- O handshake implementa X25519 efêmero, HKDF-SHA256, validação de fingerprint e token de QR de uso único. A sessão só libera mensagens após o `ack` da confirmação.
+- O handshake implementa X25519 efêmero, HKDF-SHA256, código de pareamento de uso único com limite de tentativas. A sessão só libera mensagens após o `ack` da confirmação.
 - Recomenda-se auditoria independente da camada de cripto antes de qualquer release estável.
 - O modelo assume uma LAN semiconfiável; para redes hostis (Wi-Fi público), o confinamento por firmware/firewall é essencial.
 

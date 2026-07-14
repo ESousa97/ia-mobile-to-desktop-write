@@ -6,16 +6,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <!-- Descoberta mDNS/NSD na LAN. -->
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <!-- Câmera: usada apenas para escanear o QR de pareamento. -->
-    <uses-permission android:name="android.permission.CAMERA" />
     <!-- Serviço em foreground para manter a conexão viva enquanto ativo. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
         android:name=".ClipBridgeApplication"
