@@ -94,7 +94,7 @@ Abra a pasta `mobile/` no Android Studio, deixe o Gradle sincronizar e rode no e
 - [x] Scaffold do desktop (.NET 9 + WPF/Fluent) com esqueleto dos serviços
 - [x] Scaffold do mobile (Kotlin + Compose/Material 3)
 - [x] CI (build desktop + android)
-- [ ] Handshake de pareamento (X25519 + QR) e sessão cifrada
+- [x] Handshake de pareamento (X25519 + QR) e sessão cifrada
 - [ ] Sync de clipboard de texto
 - [ ] Sync de clipboard de imagens
 - [ ] Captura e envio de screenshots em alta resolução

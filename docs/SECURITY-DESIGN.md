@@ -59,7 +59,7 @@ Nenhuma permissão de localização, contatos, armazenamento amplo, etc.
 
 ## Considerações e limites conhecidos (fase atual)
 
-- O scaffold define as **interfaces e o design**; a implementação criptográfica completa é parte do roadmap e deve passar por revisão antes de uso em produção.
+- O handshake implementa X25519 efêmero, HKDF-SHA256, validação de fingerprint e token de QR de uso único. A sessão só libera mensagens após o `ack` da confirmação.
 - Recomenda-se auditoria independente da camada de cripto antes de qualquer release estável.
 - O modelo assume uma LAN semiconfiável; para redes hostis (Wi-Fi público), o confinamento por firmware/firewall é essencial.
 

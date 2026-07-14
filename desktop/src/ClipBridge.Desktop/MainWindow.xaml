@@ -43,6 +43,25 @@
                     </StackPanel>
                 </ui:Card>
 
+                <ui:Card Margin="0,0,0,12">
+                    <StackPanel Orientation="Horizontal">
+                        <Image x:Name="PairingQrImage" Width="180" Height="180" Stretch="Uniform"
+                               SnapsToDevicePixels="True" />
+                        <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="Parear dispositivo" FontSize="15" FontWeight="Medium" />
+                            <TextBlock Text="Escaneie este QR no ClipBridge Mobile."
+                                       Margin="0,6,0,0" Opacity="0.75" TextWrapping="Wrap" />
+                            <TextBlock x:Name="PairingAddressText" Margin="0,10,0,0" Opacity="0.75"
+                                       FontFamily="Consolas" FontSize="12" />
+                            <TextBlock Text="Fingerprint" Margin="0,10,0,0" Opacity="0.7" FontSize="12" />
+                            <TextBlock x:Name="PairingFingerprintText" FontFamily="Consolas" FontWeight="SemiBold" />
+                            <ui:Button Content="Gerar novo QR" Icon="{ui:SymbolIcon ArrowSync24}"
+                                       Margin="0,14,0,0" Click="OnRefreshPairingClick"
+                                       HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </StackPanel>
+                </ui:Card>
+
                 <!-- Atalho: captura de tela -->
                 <ui:Card Margin="0,0,0,12">
                     <StackPanel>

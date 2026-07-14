@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using ClipBridge.Core.Protocol;
+using ClipBridge.Core.Security;
 
 namespace ClipBridge.Core.Net;
 
@@ -18,14 +19,19 @@ public sealed class ClipBridgeServer : IAsyncDisposable
 {
     private readonly HttpListener _listener = new();
     private readonly int _port;
+    private readonly object _pairingLock = new();
     private CancellationTokenSource? _cts;
     private Task? _acceptLoop;
+    private PairingCoordinator? _pairing;
 
     /// <summary>Disparado quando um envelope é recebido de um cliente.</summary>
     public event EventHandler<Envelope>? MessageReceived;
 
     /// <summary>Disparado quando um cliente conecta ou desconecta.</summary>
     public event EventHandler<bool>? ClientConnectionChanged;
+
+    /// <summary>Disparado depois que um cliente conclui o handshake de pareamento.</summary>
+    public event EventHandler? SecureSessionEstablished;
 
     public bool IsRunning => _listener.IsListening;
 
@@ -46,6 +52,19 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         _cts = new CancellationTokenSource();
         _listener.Start();
         _acceptLoop = Task.Run(() => AcceptLoopAsync(_cts.Token));
+    }
+
+    /// <summary>Cria um convite temporário para ser exibido como QR Code no desktop.</summary>
+    public PairingInvitation BeginPairing(string host, TimeSpan? lifetime = null)
+    {
+        var pairing = new PairingCoordinator(host, _port, lifetime);
+        lock (_pairingLock)
+        {
+            _pairing?.Dispose();
+            _pairing = pairing;
+        }
+
+        return pairing.Invitation;
     }
 
     private async Task AcceptLoopAsync(CancellationToken ct)
@@ -90,6 +109,8 @@ public sealed class ClipBridgeServer : IAsyncDisposable
 
         ClientConnectionChanged?.Invoke(this, true);
         var buffer = new byte[ProtocolInfo.DefaultChunkSize];
+        SessionCipher? sessionCipher = null;
+        var secure = false;
 
         try
         {
@@ -108,6 +129,37 @@ public sealed class ClipBridgeServer : IAsyncDisposable
                     var envelope = MessageSerializer.Deserialize(json);
                     if (envelope is not null)
                     {
+                        if (envelope.Type == MessageType.PairRequest)
+                        {
+                            sessionCipher?.Dispose();
+                            sessionCipher = await HandlePairRequestAsync(socket, envelope, ct).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        if (envelope.Type == MessageType.PairConfirm)
+                        {
+                            secure = await HandlePairConfirmationAsync(socket, envelope, sessionCipher, ct).ConfigureAwait(false);
+                            if (secure)
+                            {
+                                SecureSessionEstablished?.Invoke(this, EventArgs.Empty);
+                            }
+
+                            continue;
+                        }
+
+                        if (envelope.Type == MessageType.Hello && !secure)
+                        {
+                            continue;
+                        }
+
+                        if (!secure)
+                        {
+                            await SendAsync(socket, Envelope.Create(
+                                MessageType.Error,
+                                new ErrorPayload("auth.failed", "O pareamento deve ser concluído antes de enviar dados.")), ct).ConfigureAwait(false);
+                            continue;
+                        }
+
                         MessageReceived?.Invoke(this, envelope);
                     }
                 }
@@ -120,10 +172,83 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         }
         finally
         {
+            sessionCipher?.Dispose();
             ClientConnectionChanged?.Invoke(this, false);
             socket.Dispose();
         }
     }
+
+    private async Task<SessionCipher?> HandlePairRequestAsync(WebSocket socket, Envelope envelope, CancellationToken ct)
+    {
+        PairingCoordinator? pairing;
+        lock (_pairingLock)
+        {
+            pairing = _pairing;
+        }
+
+        if (pairing is null)
+        {
+            await SendAsync(socket, Envelope.Create(
+                MessageType.Error,
+                new ErrorPayload("auth.failed", "Não há convite de pareamento ativo.")), ct).ConfigureAwait(false);
+            return null;
+        }
+
+        try
+        {
+            var request = envelope.PayloadAs<PairRequestPayload>()
+                ?? throw new ArgumentException("Pedido de pareamento sem payload.");
+            var sessionCipher = new SessionCipher(pairing.DeriveSessionKey(request));
+            await SendAsync(socket, Envelope.Create(MessageType.PairResponse, pairing.CreateResponse()), ct).ConfigureAwait(false);
+            return sessionCipher;
+        }
+        catch (Exception)
+        {
+            await SendAsync(socket, Envelope.Create(
+                MessageType.Error,
+                new ErrorPayload("auth.failed", "Pedido de pareamento inválido.")), ct).ConfigureAwait(false);
+            return null;
+        }
+    }
+
+    private async Task<bool> HandlePairConfirmationAsync(
+        WebSocket socket,
+        Envelope envelope,
+        SessionCipher? sessionCipher,
+        CancellationToken ct)
+    {
+        if (sessionCipher is null)
+        {
+            await SendAsync(socket, Envelope.Create(
+                MessageType.Error,
+                new ErrorPayload("auth.failed", "Envie pair.request antes de pair.confirm.")), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        var confirmation = envelope.PayloadAs<PairConfirmPayload>();
+        var accepted = confirmation is not null && TryConsumePairingToken(confirmation.Token);
+        if (!accepted)
+        {
+            await SendAsync(socket, Envelope.Create(
+                MessageType.Error,
+                new ErrorPayload("auth.failed", "Token de pareamento inválido ou expirado.")), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        await SendAsync(socket, Envelope.Create(MessageType.Ack, new AckPayload(envelope.Id)), ct).ConfigureAwait(false);
+        return true;
+    }
+
+    private bool TryConsumePairingToken(string token)
+    {
+        lock (_pairingLock)
+        {
+            return _pairing?.TryConfirmToken(token) ?? false;
+        }
+    }
+
+    private static Task SendAsync(WebSocket socket, Envelope envelope, CancellationToken ct) =>
+        socket.SendAsync(Encoding.UTF8.GetBytes(MessageSerializer.Serialize(envelope)), WebSocketMessageType.Text, true, ct);
 
     public async Task StopAsync()
     {
@@ -156,5 +281,10 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         await StopAsync().ConfigureAwait(false);
         _listener.Close();
         _cts?.Dispose();
+        lock (_pairingLock)
+        {
+            _pairing?.Dispose();
+            _pairing = null;
+        }
     }
 }

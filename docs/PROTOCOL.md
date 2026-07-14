@@ -62,6 +62,16 @@ DISCONNECTED → CONNECTING → HELLO → PAIRING → SECURE ⇄ (mensagens) →
 - Mensagens de dados (`clipboard.*`, `screenshot`, `blob.*`) só são aceitas no estado **SECURE**.
 - Heartbeat (`ping`/`pong`) a cada 15s; 3 falhas → reconecta.
 
+## QR de pareamento
+
+O desktop gera um convite efêmero no formato URI abaixo e o codifica como QR Code:
+
+```text
+clipbridge://pair?host={host}&port={port}&pubKey={base64}&fingerprint={sha256-12-hex}&token={base64}&expiresAt={epoch-millis}
+```
+
+O mobile valida o `fingerprint` recebido em `pair.response` contra o valor do QR antes de enviar `pair.confirm`. O `token` tem 32 bytes aleatórios, expira em cinco minutos e é aceito somente uma vez. O desktop só envia `ack` depois de validar o token; ambos os lados então passam ao estado `SECURE`. Mensagens de aplicação recebidas antes desse estado retornam `error { code: "auth.failed" }`.
+
 ## Versionamento
 
 O campo `v` permite evolução. Um par negocia a maior versão comum no `hello`. Mudanças incompatíveis incrementam `v`; campos novos e opcionais não o fazem.

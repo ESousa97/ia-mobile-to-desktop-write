@@ -8,6 +8,7 @@ import com.esousa.clipbridge.discovery.DiscoveredDesktop
 import com.esousa.clipbridge.discovery.NsdDiscovery
 import com.esousa.clipbridge.net.ClipBridgeClient
 import com.esousa.clipbridge.net.ConnectionState
+import com.esousa.clipbridge.security.PairingInvitation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +48,8 @@ class ClipBridgeViewModel(application: Application) : AndroidViewModel(applicati
         client.connectionState.collect { state ->
             val label = when (state) {
                 is ConnectionState.Connected -> "Conectado a ${state.host}:${state.port}"
+                is ConnectionState.Pairing -> "Pareando com ${state.host}:${state.port}"
+                is ConnectionState.Secure -> "Conexão segura com ${state.host}:${state.port}"
                 is ConnectionState.Error -> "Erro: ${state.message}"
                 ConnectionState.Disconnected -> "Desconectado"
             }
@@ -57,6 +60,14 @@ class ClipBridgeViewModel(application: Application) : AndroidViewModel(applicati
     fun startDiscovery() = discovery.start()
 
     fun connectTo(desktop: DiscoveredDesktop) = client.connect(desktop.host, desktop.port)
+
+    fun pair(qrPayload: String) {
+        runCatching { PairingInvitation.parse(qrPayload) }
+            .onSuccess(client::pair)
+            .onFailure { error ->
+                _uiState.value = _uiState.value.copy(statusLabel = "QR inválido: ${error.message}")
+            }
+    }
 
     override fun onCleared() {
         super.onCleared()

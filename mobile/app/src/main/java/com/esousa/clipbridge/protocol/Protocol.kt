@@ -39,6 +39,27 @@ data class Envelope(
 )
 
 @Serializable
+data class PairRequestPayload(
+    val pubKey: String,
+    val nonce: String,
+)
+
+@Serializable
+data class PairResponsePayload(
+    val pubKey: String,
+    val fingerprint: String,
+)
+
+@Serializable
+data class PairConfirmPayload(val token: String)
+
+@Serializable
+data class AckPayload(val ackId: String)
+
+@Serializable
+data class ErrorPayload(val code: String, val message: String)
+
+@Serializable
 data class ClipboardTextPayload(
     val text: String,
     val mime: String = "text/plain; charset=utf-8",

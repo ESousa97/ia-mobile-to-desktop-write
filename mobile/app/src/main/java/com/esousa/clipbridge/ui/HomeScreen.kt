@@ -1,5 +1,6 @@
 package com.esousa.clipbridge.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Button
@@ -26,6 +28,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -37,6 +42,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun HomeScreen(viewModel: ClipBridgeViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var scannerVisible by rememberSaveable { mutableStateOf(false) }
+
+    if (scannerVisible) {
+        PairingScanner(
+            onScanned = { qrPayload ->
+                scannerVisible = false
+                viewModel.pair(qrPayload)
+            },
+            onDismiss = { scannerVisible = false },
+        )
+        return
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("ClipBridge") }) },
@@ -71,6 +88,11 @@ fun HomeScreen(viewModel: ClipBridgeViewModel) {
                 devices = state.discovered.map { it.name },
                 onSearch = viewModel::startDiscovery,
             )
+
+            Button(onClick = { scannerVisible = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text("Escanear QR de pareamento", modifier = Modifier.padding(start = 8.dp))
+            }
         }
     }
 }

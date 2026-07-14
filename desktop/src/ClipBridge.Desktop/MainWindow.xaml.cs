@@ -1,8 +1,15 @@
 using System.IO;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using ClipBridge.Core.Abstractions;
+using ClipBridge.Core.Net;
+using ClipBridge.Core.Security;
 using ClipBridge.Desktop.Services;
+using QRCoder;
 using Wpf.Ui.Controls;
 
 namespace ClipBridge.Desktop;
@@ -21,6 +28,7 @@ public partial class MainWindow : FluentWindow
     private readonly WindowsScreenCaptureService _screenCapture = new();
     private readonly WindowsKeyboardTypingService _typing = new();
     private readonly WindowsClipboardService _clipboard = new();
+    private readonly ClipBridgeServer _server = new();
 
     public MainWindow()
     {
@@ -51,6 +59,18 @@ public partial class MainWindow : FluentWindow
         _clipboard.StartWatching();
         _clipboard.ClipboardChanged += OnClipboardChanged;
         Log("Observando a área de transferência local.");
+
+        try
+        {
+            _server.Start();
+            StatusIcon.Symbol = SymbolRegular.PlugConnected24;
+            StatusText.Text = "Servidor pronto para pareamento";
+            GeneratePairingInvitation();
+        }
+        catch (Exception ex)
+        {
+            Log($"Falha ao iniciar o servidor: {ex.Message}");
+        }
     }
 
     private void OnClipboardChanged(object? sender, ClipboardContent content)
@@ -76,6 +96,43 @@ public partial class MainWindow : FluentWindow
             TypeClipboardText();
         };
         timer.Start();
+    }
+
+    private void OnRefreshPairingClick(object sender, RoutedEventArgs e) => GeneratePairingInvitation();
+
+    private void GeneratePairingInvitation()
+    {
+        var invitation = _server.BeginPairing(GetLocalIpAddress());
+        PairingAddressText.Text = $"{invitation.Host}:{invitation.Port} · expira {invitation.ExpiresAt.ToLocalTime():HH:mm}";
+        PairingFingerprintText.Text = invitation.Fingerprint;
+        PairingQrImage.Source = CreateQrImage(invitation.ToQrCodePayload());
+        Log("Novo QR de pareamento gerado.");
+    }
+
+    private static string GetLocalIpAddress()
+    {
+        var address = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(network => network.OperationalStatus == OperationalStatus.Up)
+            .SelectMany(network => network.GetIPProperties().UnicastAddresses)
+            .Select(item => item.Address)
+            .FirstOrDefault(item => item.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(item));
+
+        return address?.ToString() ?? "localhost";
+    }
+
+    private static BitmapImage CreateQrImage(string payload)
+    {
+        using var generator = new QRCodeGenerator();
+        using var data = generator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.Q);
+        var pngBytes = new PngByteQRCode(data).GetGraphic(10);
+        using var stream = new MemoryStream(pngBytes);
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.StreamSource = stream;
+        image.EndInit();
+        image.Freeze();
+        return image;
     }
 
     private void CaptureScreenshot()
@@ -122,10 +179,11 @@ public partial class MainWindow : FluentWindow
         });
     }
 
-    private void OnClosed(object? sender, EventArgs e)
+    private async void OnClosed(object? sender, EventArgs e)
     {
         _clipboard.ClipboardChanged -= OnClipboardChanged;
         _clipboard.Dispose();
         _hotkeys.Dispose();
+        await _server.DisposeAsync();
     }
 }
