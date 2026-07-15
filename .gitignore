@@ -94,6 +94,17 @@ $RECYCLE.BIN/
 # ===== Ferramentas locais / agentes =======================================
 .claude/settings.local.json
 
+# ===== Builds locais / publish (não versionar binários) ====================
+desktop/publish/
+desktop/publish-*/
+desktop/dist/
+*.exe
+*.pdb
+*.dll
+*.msi
+*.msix
+*.appx
+
 # ===== Outros ==============================================================
 *.log
 tmp/

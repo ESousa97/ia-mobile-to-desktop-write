@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    O ClipBridge conecta ao desktop por WebSocket em texto claro (ws://) num IP
+    dinâmico da LAN, então não é possível restringir por domínio. O tráfego é,
+    porém, cifrado ponta-a-ponta na camada de aplicação (handshake X25519 +
+    AES-256-GCM por payload — ver docs/SECURITY-DESIGN.md); o "cleartext" aqui é
+    apenas o transporte. Sem isto, o Android (API 28+) bloqueia a conexão com
+    "CLEARTEXT communication not permitted by network security policy".
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

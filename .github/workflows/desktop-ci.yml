@@ -24,10 +24,10 @@ jobs:
           dotnet-version: '9.0.x'
 
       - name: Restore
-        run: dotnet restore desktop/ClipBridge.sln
+        run: dotnet restore desktop/Beam.sln
 
       - name: Build
-        run: dotnet build desktop/ClipBridge.sln -c Release --no-restore
+        run: dotnet build desktop/Beam.sln -c Release --no-restore
 
       - name: Test
-        run: dotnet test desktop/ClipBridge.sln -c Release --no-build --verbosity normal
+        run: dotnet test desktop/Beam.sln -c Release --no-build --verbosity normal

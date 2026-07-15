@@ -10,8 +10,8 @@ O princípio de design central é **local-first**: nenhum dado sai da LAN. Não 
 
 | | Papel | Justificativa |
 |---|---|---|
-| **Desktop (Windows)** | **Servidor** | Fica ligado, tem IP relativamente estável na LAN, e é onde vivem os recursos de tela/teclado. Publica um serviço mDNS e aceita conexões WebSocket. |
-| **Mobile (Android)** | **Cliente** | Descobre o desktop via mDNS, faz o pareamento e conecta. Reconecta automaticamente quando volta à rede. |
+| **Desktop (Windows)** | **Servidor** | Fica ligado, IP estável na LAN, recursos de tela/teclado. Responde descoberta UDP e aceita WebSocket. |
+| **Mobile (Android)** | **Cliente** | Descobre o desktop via broadcast UDP, pareia com código de 6 dígitos e mantém sync em foreground service. |
 
 Um servidor pode aceitar múltiplos dispositivos pareados (ex.: celular + tablet).
 
@@ -20,100 +20,96 @@ Um servidor pode aceitar múltiplos dispositivos pareados (ex.: celular + tablet
 ### Desktop (`desktop/src`)
 
 ```
-ClipBridge.Desktop  (WPF, net9.0-windows)      ← UI + serviços específicos do Windows
+ClipBridge.Desktop  (WPF, net9.0-windows)      ← UI + serviços Windows + bandeja
         │
-        ├── depende de ──►  ClipBridge.Core (net9.0)   ← lógica agnóstica de plataforma
+        ├── depende de ──►  ClipBridge.Core (net9.0)   ← protocolo, rede, cripto
         │
-ClipBridge.Core.Tests (xUnit)                  ← testes de protocolo/cripto
+ClipBridge.Core.Tests (xUnit)
 ```
 
-**ClipBridge.Core** (reutilizável, sem dependência de UI):
-- `Protocol/` — modelos das mensagens (envelope, tipos, serialização JSON)
-- `Net/` — servidor WebSocket, gerenciamento de sessões, framing
-- `Discovery/` — anúncio mDNS (`_clipbridge._tcp`)
-- `Security/` — handshake X25519, HKDF, cifra AES-256-GCM, gestão de dispositivos pareados
-- `Abstractions/` — interfaces para os serviços de plataforma (`IClipboardService`, `IScreenCaptureService`, `IKeyboardTypingService`, `IHotkeyService`)
+**ClipBridge.Core** (agnóstico de UI):
+- `Protocol/` — envelopes JSON, payloads, `SecureEnvelopeCodec`
+- `Net/` — `ClipBridgeServer`, blobs (`BlobSender`/`BlobReceiver`), UDP discovery na porta 8788
+- `Security/` — X25519, HKDF, AES-256-GCM, `PairingCoordinator` (código 6 dígitos)
+- `Abstractions/` — clipboard, captura, digitação, hotkeys
 
-**ClipBridge.Desktop** (WPF + WPF-UI, específico do Windows):
-- Implementações Win32 das abstrações:
-  - `WindowsClipboardService` — lê/escreve texto e imagens (`System.Windows.Clipboard`, STA)
-  - `WindowsScreenCaptureService` — captura full-res via GDI `BitBlt` → PNG
-  - `WindowsKeyboardTypingService` — `SendInput` (Unicode) para digitar caractere a caractere
-  - `Win32HotkeyService` — `RegisterHotKey` para atalhos globais (`Ctrl+F`, `Ctrl+F1`)
-- UI: janela principal (status, dispositivos pareados, QR de pareamento), ícone na bandeja (H.NotifyIcon), início minimizado
+**ClipBridge.Desktop** (WPF + WPF-UI):
+- `WindowsClipboardService` — texto e PNG via `System.Windows.Clipboard`
+- `WindowsScreenCaptureService` — GDI `BitBlt` → PNG full-res
+- `WindowsKeyboardTypingService` — `SendInput` Unicode (`Ctrl+F1`, **somente local**)
+- `Win32HotkeyService` — atalhos globais `Ctrl+F` / `Ctrl+F1`
+- `TrayIconService` — minimiza para bandeja; servidor continua ativo
+- UI — código de pareamento, status, log de atividade
 
 ### Mobile (`mobile/app`)
 
-Arquitetura **MVVM + Unidirectional Data Flow** (padrão recomendado para Compose):
+Arquitetura **MVVM + UDF** (Compose / Material 3):
 
 ```
-UI (Composables, Material 3)
+HomeScreen (Composables)
    │  observa StateFlow
-ViewModel
-   │  usa
-Repositórios / Serviços
-   ├── ClipBridgeClient       (WebSocket — OkHttp/Ktor)
-   ├── DiscoveryService       (NSD / mDNS)
-   ├── ClipboardManager       (ClipboardManager do Android)
-   ├── PairingManager         (QR scan + X25519 + AES-GCM)
-   └── ScreenshotStore        (cache das capturas recebidas)
+ClipBridgeViewModel
+   │  delega para
+ClipBridgeSession (Application)     ← longa duração
+   ├── UdpDiscovery                 (broadcast UDP :8788)
+   ├── ClipBridgeClient             (WebSocket + blobs + ping/pong)
+   ├── ClipboardRepository
+   └── ClipBridgeForegroundService  (notificação enquanto pareado)
 ```
-
-Serviço em foreground para manter a conexão viva enquanto ativo, respeitando as restrições de background do Android.
 
 ## Fluxos principais
 
 ### 1. Descoberta + pareamento (primeira vez)
+
 ```
 Desktop                                   Mobile
-  │  publica _clipbridge._tcp (mDNS)         │
-  │  exibe QR (host, porta, chave pública,   │
-  │           fingerprint, token de par.)    │
-  │                                          │  usuário escaneia o QR
-  │  ◄──────── conecta (WebSocket) ──────────│
-  │  ◄──────── handshake X25519 ────────────►│  deriva chave de sessão (HKDF)
-  │  ◄──────── verifica fingerprint ────────►│  (proteção contra MITM)
-  │  ────────── sessão cifrada pronta ──────►│
+  │  escuta UDP :8788                        │
+  │  exibe código 6 dígitos                  │  broadcast clipbridge.discover.v1
+  │  ◄──────── announce + porta WS ──────────│
+  │  ◄──────── WebSocket + pair.request ─────│
+  │  ────────── pair.response ───────────────►│
+  │  ◄──────── pair.confirm { code } ────────│  (código exibido no desktop)
+  │  ────────── ack ─────────────────────────►│  → estado SECURE
 ```
 
-### 2. Copiar no PC → aparece no celular
+### 2. Sync de clipboard (texto / imagem)
+
 ```
-Clipboard watcher (Win) detecta mudança
-  → normaliza (texto UTF-8 / imagem PNG)
-  → serializa envelope → cifra (AES-256-GCM)
-  → envia via WebSocket para cada sessão pareada
-Mobile recebe → decifra → grava no ClipboardManager / mostra a imagem
+Mudança local → envelope cifrado (ou blob.begin/chunk/end + metadados)
+  → WebSocket → par decifra → grava clipboard / exibe preview com zoom
 ```
 
-### 3. `Ctrl+F` — screenshot em alta resolução
+Anti-eco: flags `_suppressNextChange` (desktop) e `suppressClipboardSend` (mobile).
+
+### 3. Screenshot (`Ctrl+F`)
+
 ```
-Hotkey global dispara → captura full-res (todos os monitores ou o principal)
-  → PNG sem perda → (opcional) fragmentação em chunks
-  → envia cifrado → Mobile exibe em visualizador com zoom/pan
+Hotkey → captura PNG full-res → blob cifrado → screenshot { blobId, … }
+  → mobile exibe no visualizador com zoom/pan
 ```
 
-### 4. `Ctrl+F1` — digitar o texto copiado
-```
-Hotkey global dispara → lê o texto atual do clipboard
-  → SendInput injeta cada caractere Unicode na janela em foco
-  (útil onde Ctrl+V é bloqueado; NÃO usa a área de transferência do destino)
-```
+### 4. Digitação (`Ctrl+F1`)
+
+Disparada **apenas no desktop** por hotkey local — nunca por comando remoto (ver [`THREAT-MODEL.md`](THREAT-MODEL.md)).
 
 ## Decisões de arquitetura (ADR resumido)
 
 | Decisão | Escolha | Alternativas descartadas | Motivo |
 |---|---|---|---|
-| Transporte | WebSocket sobre TCP na LAN | UDP puro, gRPC | Bidirecional, simples, ótimo suporte nas duas plataformas |
-| Descoberta | mDNS / NSD | Broadcast UDP manual, digitar IP | Padrão, zero-config, suportado nativamente |
-| Cripto | AES-256-GCM + X25519/HKDF (camada de app) | TLS com cert autoassinado | E2E real, pinning simples via fingerprint, sem PKI |
-| Desktop | .NET 9 + WPF + WPF-UI | Electron, WinUI 3, Tauri | Nativo, leve, acesso limpo a Win32 (hotkey/SendInput/captura) |
-| Mobile | Kotlin + Compose + Material 3 | Flutter, React Native | Padrão nativo Android, UI polida, ícones não-inline |
-| Fragmentação | Chunks binários para imagens grandes | Base64 em JSON | Evita inflar 33% e picos de memória |
+| Transporte | WebSocket TCP | UDP puro, gRPC | Bidirecional, suporte maduro |
+| Descoberta | Broadcast UDP :8788 | mDNS/NSD, IP manual | Simples, funciona no emulador (10.0.2.2 debug) |
+| Pareamento | Código 6 dígitos + X25519 | QR + fingerprint | UX mais simples; limites documentados |
+| Cripto | AES-256-GCM + X25519/HKDF | TLS autoassinado | E2E na camada de app |
+| Blobs | Chunks binários cifrados | Base64 em JSON | Memória e overhead |
+| Desktop | .NET 9 + WPF | Electron, WinUI | Win32 nativo, leve |
+| Mobile | Kotlin + Compose | Flutter | Material 3 nativo |
+| Background | Foreground service | WorkManager | Mantém WebSocket ativo |
 
 ## Portas e rede
 
-- Porta padrão do servidor: **`8787`** (configurável). Bind restrito às interfaces de LAN.
-- Serviço mDNS: `_clipbridge._tcp.local`.
-- Nenhuma porta é exposta à internet; recomenda-se regra de firewall limitada à sub-rede local.
+- WebSocket: **`8787`** (padrão)
+- Descoberta UDP: **`8788`**
+- Bind desktop: `http://+:8787/` (pode exigir `urlacl` / admin)
+- Sem exposição à internet; firewall restrito à sub-rede LAN
 
-Veja o formato das mensagens em [`PROTOCOL.md`](PROTOCOL.md) e o modelo de segurança em [`SECURITY-DESIGN.md`](SECURITY-DESIGN.md).
+Veja [`PROTOCOL.md`](PROTOCOL.md) e [`SECURITY-DESIGN.md`](SECURITY-DESIGN.md).

@@ -1,3 +1,9 @@
 <resources>
-    <string name="app_name">ClipBridge</string>
+    <string name="app_name">Beam</string>
+    <string name="input_method_name">Teclado Beam</string>
+    <string name="input_method_subtype">Português (Brasil)</string>
+    <string name="notification_channel_name">Sincronização</string>
+    <string name="notification_channel_description">Mantém a conexão com o desktop ativa em segundo plano</string>
+    <string name="notification_title">Beam ativo</string>
+    <string name="notification_default_body">Sincronizando com o desktop</string>
 </resources>

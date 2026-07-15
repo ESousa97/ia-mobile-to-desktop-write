@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Beam.Desktop</RootNamespace>
+    <AssemblyName>Beam</AssemblyName>
+    <Product>Beam</Product>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Description>Beam para Windows — sincronização de área de transferência, captura de tela e digitação simulada.</Description>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <!-- App WPF (com WinForms apenas para o ícone de bandeja): o DPI awareness Per-Monitor v2
+         é definido no app.manifest de propósito, pois é lido pelo WPF na inicialização e é
+         essencial para a captura de tela em resolução física. O analisador de WinForms (WFO0003)
+         sugere mover para ApplicationHighDpiMode, o que não se aplica a este app WPF. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UI Fluent (Windows 11), com ícones via fonte (Fluent System Icons) — não inline. -->
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Beam.Core\Beam.Core.csproj" />
+  </ItemGroup>
+
+</Project>

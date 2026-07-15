@@ -1,114 +1,168 @@
-<div align="center">
+# Beam
 
-# 🔗 ClipBridge
+Local clipboard sync between Windows and Android—text and images, end to end, without leaving your network.
 
-**Área de transferência compartilhada entre Windows e Android — texto e imagens, em tempo real, 100% na sua rede local.**
-
-[![Desktop CI](https://github.com/ESousa97/clipbridge/actions/workflows/desktop-ci.yml/badge.svg)](https://github.com/ESousa97/clipbridge/actions/workflows/desktop-ci.yml)
-[![Android CI](https://github.com/ESousa97/clipbridge/actions/workflows/android-ci.yml/badge.svg)](https://github.com/ESousa97/clipbridge/actions/workflows/android-ci.yml)
+[![Desktop CI](https://github.com/ESousa97/ia-mobile-to-desktop-write/actions/workflows/desktop-ci.yml/badge.svg)](https://github.com/ESousa97/ia-mobile-to-desktop-write/actions/workflows/desktop-ci.yml)
+[![Android CI](https://github.com/ESousa97/ia-mobile-to-desktop-write/actions/workflows/android-ci.yml/badge.svg)](https://github.com/ESousa97/ia-mobile-to-desktop-write/actions/workflows/android-ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
-[![Kotlin](https://img.shields.io/badge/Kotlin-Compose-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
-
-</div>
 
 ---
 
-## ✨ O que é
+## What Beam is
 
-O **ClipBridge** mantém a área de transferência do seu **PC (Windows)** e do seu **celular (Android)** em sincronia. Copiou um texto ou imagem no PC? Aparece no celular. E vice-versa. Sem nuvem, sem conta, sem seus dados saindo da sua rede Wi-Fi.
+Beam keeps the clipboard of a Windows PC and an Android phone in sync over your local network. Copy text or an image on one device and it appears on the other. There is no cloud relay, no account, and no third-party service in the path: traffic stays on your Wi‑Fi or LAN.
 
-Além disso, o app de desktop traz dois superpoderes acionados por atalho global:
+The Windows app also exposes two global hotkeys for desktop-only workflows that do not rely on remote control:
 
-| Atalho | Ação |
-|--------|------|
-| `Ctrl + F` | 📸 Captura a tela em **alta resolução** (full-res, sem perda) em segundo plano e envia para o celular |
-| `Ctrl + F1` | ⌨️ **Digita** o texto copiado (em vez de colar) — simula o teclado físico, funcionando em qualquer campo/app |
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl + F` | Capture a full-resolution screenshot in the background and send it to the phone |
+| `Ctrl + F1` | Type the current clipboard text via simulated keystrokes instead of pasting |
 
-> Por que "digitar" em vez de "colar"? Alguns campos bloqueiam `Ctrl+V` (bancos, terminais, formulários). O ClipBridge emula o teclado caractere a caractere, contornando essas restrições.
+Simulated typing exists for fields that block `Ctrl+V` (banking apps, some terminals, locked-down forms). Beam injects Unicode input character by character after you release the modifier keys.
 
-## 🎯 Principais recursos
+## Capabilities
 
-- 🔄 **Sync bidirecional** de texto e imagens (PC ↔ Android)
-- 📸 **Screenshots em alta definição** com zoom/pan no celular
-- ⌨️ **Digitação simulada** do conteúdo copiado em qualquer lugar do desktop
-- 🔒 **Criptografia ponta-a-ponta** (AES-256-GCM) — nem em LAN o tráfego fica exposto
-- 📡 **Descoberta automática** via broadcast UDP — sem digitar IP
-- 🔗 **Pareamento por código** — digite o código de 6 dígitos exibido no desktop
-- 🎨 **UI nativa e polida** — Fluent Design (Windows 11) e Material 3 (Android)
-- 🚫 **Zero nuvem** — nada trafega fora da sua rede local
+- Bidirectional clipboard sync for text and images
+- Full-resolution screenshots from the PC, with zoom and pan on the phone
+- Local keyboard injection on Windows (`Ctrl+F1`), never driven by a remote command
+- End-to-end session encryption (X25519 key agreement, HKDF, AES-256-GCM)
+- Automatic discovery on the LAN via UDP broadcast—no manual IP entry for normal use
+- Pairing with a six-digit code shown on the desktop
+- Native UI: Fluent Design on Windows 11 (WPF + WPF-UI) and Material 3 on Android (Jetpack Compose)
+- Foreground service on Android to keep the connection alive in the background
+- Tray icon on Windows so the server can keep running while minimized
 
-## 🏗️ Arquitetura em 30 segundos
-
-```
-┌────────────────────────┐         Wi-Fi / LAN          ┌────────────────────────┐
-│   ClipBridge Desktop    │  ←── WebSocket + AES-GCM ──→ │   ClipBridge Mobile     │
-│   (Windows · .NET 9)    │                              │   (Android · Kotlin)    │
-│                         │                              │                         │
-│  • Servidor WebSocket   │   descoberta via UDP         │  • Cliente WebSocket    │
-│  • Clipboard watcher    │   pareamento por código      │  • Clipboard watcher    │
-│  • Hotkeys globais      │                              │  • Visualizador de      │
-│  • Captura de tela      │                              │    screenshots (HD)     │
-│  • Digitação (SendInput)│                              │                         │
-└────────────────────────┘                              └────────────────────────┘
-```
-
-O **desktop é o servidor** (fica ligado, tem IP estável na LAN); o **celular é o cliente**. Detalhes completos em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), o protocolo em [`docs/PROTOCOL.md`](docs/PROTOCOL.md) e o modelo de segurança em [`docs/SECURITY-DESIGN.md`](docs/SECURITY-DESIGN.md).
-
-## 📁 Estrutura do repositório
+## How it works
 
 ```
-clipbridge/
-├─ desktop/            # App Windows — C# / .NET 9 / WPF + WPF-UI (Fluent)
+┌────────────────────────────┐         Wi-Fi / LAN          ┌────────────────────────────┐
+│       Beam Desktop         │  ←── WebSocket + AES-GCM ──→ │        Beam Mobile         │
+│    (Windows · .NET 9)      │                              │    (Android · Kotlin)      │
+│                            │                              │                            │
+│  WebSocket server          │   UDP discovery (:8788)      │  WebSocket client          │
+│  Clipboard watcher         │   Six-digit pairing code     │  Clipboard watcher         │
+│  Global hotkeys            │                              │  Beam keyboard (IME)       │
+│  Screen capture            │                              │  Screenshot viewer (HD)    │
+│  Local SendInput typing    │                              │  Foreground sync service   │
+└────────────────────────────┘                              └────────────────────────────┘
+```
+
+The desktop is the server (stable host on the LAN). The phone is the client: it discovers the desktop, completes pairing, and maintains a durable session.
+
+Deeper material lives under `docs/`:
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Protocol](docs/PROTOCOL.md)
+- [Security design](docs/SECURITY-DESIGN.md)
+- [Threat model](docs/THREAT-MODEL.md)
+
+Default ports: WebSocket `8787`, UDP discovery `8788`.
+
+## Repository layout
+
+```
+.
+├─ desktop/                 Windows app (.NET 9 / WPF)
+│  ├─ Beam.sln
+│  ├─ scripts/              publish.ps1, package-msix.ps1
+│  ├─ installer/            MSIX package manifest
 │  └─ src/
-│     ├─ ClipBridge.Core/        # Protocolo, cripto, rede, descoberta (agnóstico de UI)
-│     ├─ ClipBridge.Desktop/     # UI WPF + serviços Windows (clipboard, hotkey, tela, digitação)
-│     └─ ClipBridge.Core.Tests/  # Testes unitários (xUnit)
-├─ mobile/             # App Android — Kotlin / Jetpack Compose / Material 3
-│  └─ app/src/main/...
-├─ docs/               # Arquitetura, protocolo, segurança, modelo de ameaças
-└─ .github/workflows/  # CI (build desktop + android)
+│     ├─ Beam.Core/         Protocol, crypto, networking (UI-agnostic)
+│     ├─ Beam.Desktop/      WPF UI and Windows services
+│     └─ Beam.Core.Tests/   xUnit tests
+├─ mobile/                  Android app (Kotlin / Compose)
+│  ├─ app/
+│  ├─ keystore.properties.example
+│  └─ scripts/              release build helpers
+├─ docs/                    Architecture, protocol, security
+└─ .github/workflows/       Desktop CI, Android CI, CodeQL, release on tag
 ```
 
-## 🚀 Começando (desenvolvimento)
+Local publish output (`desktop/publish/`, `desktop/publish-*/`, `desktop/dist/`) and binaries (`.exe`, `.pdb`, `.dll`, MSIX packages) are gitignored. Build artifacts are produced by scripts or CI—they are not committed.
 
-### Pré-requisitos
-- **Desktop:** [.NET 9 SDK](https://dotnet.microsoft.com/download) + Windows 10/11
-- **Mobile:** [Android Studio](https://developer.android.com/studio) (Ladybug ou superior) + JDK 17
+## Getting started
 
-### Rodar o desktop
+### Prerequisites
+
+- **Desktop:** [.NET 9 SDK](https://dotnet.microsoft.com/download) on Windows 10 or 11
+- **Mobile:** [Android Studio](https://developer.android.com/studio) (recent stable) and JDK 17
+
+### Run the desktop app
+
 ```bash
 cd desktop
-dotnet build ClipBridge.sln
-dotnet run --project src/ClipBridge.Desktop
+dotnet build Beam.sln
+dotnet run --project src/Beam.Desktop
 ```
 
-### Rodar o mobile
-Abra a pasta `mobile/` no Android Studio, deixe o Gradle sincronizar e rode no emulador/dispositivo.
+### Run the Android app
 
-> ⚠️ Este repositório está na fase de **fundação** (scaffold + arquitetura). Veja o [roadmap](#-roadmap) para o que já existe e o que vem a seguir.
+Open `mobile/` in Android Studio, or from a terminal:
 
-## 🗺️ Roadmap
+```bash
+cd mobile
+./gradlew assembleDebug installDebug
+```
 
-- [x] Arquitetura, protocolo e modelo de segurança documentados
-- [x] Scaffold do desktop (.NET 9 + WPF/Fluent) com esqueleto dos serviços
-- [x] Scaffold do mobile (Kotlin + Compose/Material 3)
-- [x] CI (build desktop + android)
-- [x] Handshake de pareamento (X25519 + código de 6 dígitos) e sessão cifrada
-- [ ] Sync de clipboard de texto
-- [ ] Sync de clipboard de imagens
-- [ ] Captura e envio de screenshots em alta resolução
-- [ ] Digitação simulada (`Ctrl+F1`)
-- [ ] Empacotamento/instalador (MSIX / APK assinado)
+For a signed release build, copy `keystore.properties.example` to `keystore.properties` (never commit that file), point it at your keystore, then run `./gradlew assembleRelease`. Helper scripts live in `mobile/scripts/`.
 
-## 🔐 Segurança
+## First-run walkthrough
 
-Leve a sério: veja [`SECURITY.md`](SECURITY.md) para a política de reporte de vulnerabilidades e [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) para o modelo de ameaças.
+1. Start Beam on the PC. Note the six-digit pairing code on the main window.
+2. Start Beam on the phone. Join the same network, discover the desktop, and enter the code.
+3. On Android, open **Beam Keyboard** → **Configure**, enable the IME in system settings, and select it as the default input method. Android only allows the current IME to observe new clipboard copies while the app is in the background; this step is required for reliable phone-to-PC text sync.
+4. On the PC, press `Ctrl + F` to capture the screen and send it to the phone.
+5. Copy text on the phone. It should land on the Windows clipboard. Focus the destination field and press `Ctrl + F1`. Beam waits until `Ctrl` is released, then types the text as physical keyboard input (it does not paste).
 
-## 🤝 Contribuindo
+Note on elevation: Windows will not inject keystrokes from a non-elevated process into an elevated one. If the target app runs as Administrator, run Beam Desktop as Administrator as well.
 
-Confira [`CONTRIBUTING.md`](CONTRIBUTING.md). O projeto usa [Conventional Commits](https://www.conventionalcommits.org/).
+## Publishing the desktop build
 
-## 📄 Licença
+Portable self-contained executable:
+
+```powershell
+cd desktop/scripts
+./publish.ps1
+# Output: desktop/publish/Beam.exe
+```
+
+MSIX layout (requires the Windows SDK tooling on the machine):
+
+```powershell
+cd desktop/scripts
+./package-msix.ps1
+# Output: desktop/dist/msix/
+```
+
+Tag a version (`v*`) to trigger [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds desktop artifacts and a debug Android APK and attaches them to a GitHub Release. Store signing for release APKs and MSIX certificates remains a manual follow-up (GitHub Secrets / signing cert); templates and Gradle wiring are already in place.
+
+## Project status
+
+| Area | State |
+|------|--------|
+| Protocol, pairing, encrypted sessions | Done |
+| Bidirectional text and image clipboard | Done |
+| High-resolution screenshots (desktop → mobile) | Done |
+| Android foreground session, heartbeat, auto-rediscovery | Done |
+| Local simulated typing on Windows | Done |
+| Tray minimize, HD image viewer | Done |
+| Portable publish script and MSIX packaging layout | Done |
+| Release workflow on `v*` tags | Done |
+| Optional Android release signing via `keystore.properties` | Done |
+| Signed release APK in CI | Planned (needs keystore secrets) |
+| MSIX / Microsoft Store signing | Planned |
+
+## Security
+
+Clipboard contents are treated as sensitive. Pairing establishes an ephemeral key agreement; application payloads are encrypted with AES-256-GCM even on a trusted LAN.
+
+Read [SECURITY.md](SECURITY.md) for the vulnerability reporting process, and [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) for assumptions and non-goals. Secrets, keystores, and certificates must stay out of Git—see [`.gitignore`](.gitignore).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
+
+## License
 
 [MIT](LICENSE) © 2026 ESousa97

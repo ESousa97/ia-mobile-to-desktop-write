@@ -35,7 +35,7 @@ jobs:
           languages: ${{ matrix.language }}
 
       - name: Build
-        run: dotnet build desktop/ClipBridge.sln -c Release
+        run: dotnet build desktop/Beam.sln -c Release
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
