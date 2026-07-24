@@ -43,7 +43,18 @@ public sealed class PairingCoordinator : IDisposable
 
     public PairResponsePayload CreateResponse() => new(Convert.ToBase64String(_keyAgreement.PublicKey.Span));
 
-    public byte[] DeriveSessionKey(PairRequestPayload request)
+    public byte[] DeriveSessionKey(PairRequestPayload request) =>
+        Derive(request, SessionKeyInfo);
+
+    /// <summary>
+    /// Chave de retomada do vínculo: mesmo segredo ECDH, info HKDF distinta —
+    /// logo, independente da chave de sessão. É ela que permite reconectar sem
+    /// código enquanto a confiança estiver válida.
+    /// </summary>
+    public byte[] DeriveResumeKey(PairRequestPayload request) =>
+        Derive(request, ResumeHandshake.ResumeKeyInfo);
+
+    private byte[] Derive(PairRequestPayload request, byte[] info)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(request);
@@ -55,7 +66,7 @@ public sealed class PairingCoordinator : IDisposable
             throw new ArgumentException("O nonce de pareamento deve ter 32 bytes.", nameof(request));
         }
 
-        return _keyAgreement.DeriveSessionKey(peerPublicKey, salt, SessionKeyInfo);
+        return _keyAgreement.DeriveSessionKey(peerPublicKey, salt, info);
     }
 
     public bool TryConfirmCode(string? code)

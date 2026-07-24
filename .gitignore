@@ -98,6 +98,8 @@ $RECYCLE.BIN/
 desktop/publish/
 desktop/publish-*/
 desktop/dist/
+# Artefatos finais reunidos por release (desktop + mobile)
+/dist/
 *.exe
 *.pdb
 *.dll

@@ -55,6 +55,7 @@ import android.provider.Settings as AndroidSettings
 fun HomeScreen(viewModel: ClipBridgeViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var showPairingForm by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         topBar = { TopAppBar(title = { Text("Beam") }) },
     ) { innerPadding ->
@@ -74,12 +75,17 @@ fun HomeScreen(viewModel: ClipBridgeViewModel) {
                 },
             )
 
-            if (state.isSecure) {
-                ConnectedCard()
-            } else {
-                PairingCodeCard(
+            when {
+                state.isSecure -> ConnectedCard(trustExpiresAt = state.trustExpiresAt)
+                // Com vínculo válido a reconexão é automática; o card de código só
+                // volta se o usuário pedir (ou se o desktop recusar o vínculo).
+                state.isResuming && !showPairingForm -> ReconnectingCard(
+                    trustExpiresAt = state.trustExpiresAt,
+                    onPairWithCode = { showPairingForm = true },
+                )
+                else -> PairingCodeCard(
                     desktopFound = state.discovered.isNotEmpty(),
-                    onConfirm = viewModel::confirmPairing,
+                    onConfirm = { code, manualAddress -> viewModel.confirmPairing(code, manualAddress) },
                 )
             }
 
@@ -104,7 +110,7 @@ fun HomeScreen(viewModel: ClipBridgeViewModel) {
             )
 
             DevicesCard(
-                devices = state.discovered.map { it.name },
+                devices = state.discovered.map { "${it.host}:${it.port}" },
                 onSearch = viewModel::startDiscovery,
             )
 
@@ -144,18 +150,20 @@ private fun InputMethodCard(isSelected: Boolean, onOpenSettings: () -> Unit) {
 @Composable
 private fun PairingCodeCard(
     desktopFound: Boolean,
-    onConfirm: (String) -> Unit,
+    onConfirm: (String, String?) -> Unit,
 ) {
     var code by rememberSaveable { mutableStateOf("") }
+    var manualAddress by rememberSaveable { mutableStateOf("") }
+    var showManual by rememberSaveable { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Text("Parear dispositivo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
                 if (desktopFound) {
-                    "Desktop encontrado. Digite o código de 6 dígitos exibido no ClipBridge Desktop."
+                    "Desktop encontrado. Digite o código de 6 dígitos exibido no Beam Desktop."
                 } else {
-                    "Procurando um ClipBridge Desktop na rede local."
+                    "Procurando um Beam Desktop na Wi-Fi. O PC precisa estar na mesma rede."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = 4.dp),
@@ -170,8 +178,32 @@ private fun PairingCodeCard(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
             )
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = { onConfirm(code) }, enabled = desktopFound && code.length == 6) {
+
+            // Escape para redes que filtram broadcast (isolamento de clientes,
+            // Wi-Fi corporativa): o IP aparece na janela do Beam Desktop.
+            if (showManual) {
+                OutlinedTextField(
+                    value = manualAddress,
+                    onValueChange = { manualAddress = it },
+                    label = { Text("IP do PC (ex.: 192.168.0.10)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { showManual = !showManual }) {
+                    Text(if (showManual) "Usar busca automática" else "Informar IP manualmente")
+                }
+                TextButton(
+                    onClick = { onConfirm(code, manualAddress.takeIf { showManual }) },
+                    enabled = code.length == 6 &&
+                        (desktopFound || (showManual && manualAddress.isNotBlank())),
+                ) {
                     Text("Autenticar")
                 }
             }
@@ -209,7 +241,7 @@ private fun StatusCard(status: String, activity: String?, isSecure: Boolean) {
 }
 
 @Composable
-private fun ConnectedCard() {
+private fun ConnectedCard(trustExpiresAt: Long?) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -232,9 +264,51 @@ private fun ConnectedCard() {
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+                trustExpiresAt?.let { expiry ->
+                    Text(
+                        "Reconexão automática por ${remainingTrust(expiry)}.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun ReconnectingCard(trustExpiresAt: Long?, onPairWithCode: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Wifi, contentDescription = null, modifier = Modifier.size(28.dp))
+                Column(modifier = Modifier.padding(start = 12.dp)) {
+                    Text(
+                        "Reconectando automaticamente",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        trustExpiresAt?.let { "Vínculo válido por ${remainingTrust(it)} — sem precisar de código." }
+                            ?: "Retomando a sessão anterior sem precisar de código.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onPairWithCode) {
+                    Text("Parear com código")
+                }
+            }
+        }
+    }
+}
+
+/** "12 h" ou "45 min" — o suficiente para o usuário saber quanto ainda dura. */
+private fun remainingTrust(expiresAt: Long): String {
+    val minutes = ((expiresAt - System.currentTimeMillis()) / 60_000).coerceAtLeast(0)
+    return if (minutes >= 60) "${minutes / 60} h" else "$minutes min"
 }
 
 @Composable

@@ -16,7 +16,10 @@ Write-Host "2/3 Montando layout MSIX..."
 if (Test-Path $layoutDir) { Remove-Item $layoutDir -Recurse -Force }
 New-Item -ItemType Directory -Path $layoutDir -Force | Out-Null
 Copy-Item "$publishDir\*" $layoutDir -Recurse -Force
-Copy-Item "$PSScriptRoot\..\installer\Package.appxmanifest" $layoutDir -Force
+# Símbolos não vão no pacote distribuído: só inflam e expõem caminhos de build.
+Get-ChildItem $layoutDir -Filter *.pdb -Recurse | Remove-Item -Force
+# MakeAppx só reconhece o manifesto com este nome exato dentro do layout.
+Copy-Item "$PSScriptRoot\..\installer\Package.appxmanifest" (Join-Path $layoutDir "AppxManifest.xml") -Force
 
 $assetsDir = Join-Path $layoutDir "Assets"
 New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
@@ -40,5 +43,9 @@ if (-not $makeAppx) {
 
 New-Item -ItemType Directory -Path (Split-Path $msixPath) -Force | Out-Null
 & $makeAppx pack /d $layoutDir /p $msixPath /o | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "MakeAppx falhou (exit code $LASTEXITCODE); o MSIX não foi gerado."
+}
+
 Write-Host "3/3 MSIX gerado (não assinado): $msixPath"
 Write-Host "Assine com SignTool antes de distribuir: signtool sign /fd SHA256 /a `"$msixPath`""

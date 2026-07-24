@@ -54,10 +54,37 @@
                                        Margin="0,6,0,0" Opacity="0.75" TextWrapping="Wrap" />
                             <TextBlock Text="Código de autenticação" Margin="0,10,0,0" Opacity="0.7" FontSize="12" />
                             <TextBlock x:Name="PairingCodeText" FontFamily="Consolas" FontSize="24" FontWeight="Bold" />
-                            <ui:Button Content="Gerar novo código" Icon="{ui:SymbolIcon ArrowSync24}"
-                                       Margin="0,14,0,0" Click="OnRefreshPairingClick"
-                                       HorizontalAlignment="Left" />
+                            <TextBlock Text="Endereço na rede (para conexão manual)" Margin="0,10,0,0"
+                                       Opacity="0.7" FontSize="12" />
+                            <TextBlock x:Name="AddressText" FontFamily="Consolas" FontSize="14"
+                                       TextWrapping="Wrap" Text="—" />
+                            <TextBlock x:Name="TrustText" Margin="0,10,0,0" Opacity="0.75" TextWrapping="Wrap"
+                                       Text="Nenhum celular com reconexão automática." />
+                            <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                <ui:Button Content="Gerar novo código" Icon="{ui:SymbolIcon ArrowSync24}"
+                                           Click="OnRefreshPairingClick" />
+                                <ui:Button x:Name="RevokeButton" Content="Revogar dispositivos"
+                                           Icon="{ui:SymbolIcon Prohibited24}" Margin="8,0,0,0"
+                                           Click="OnRevokeTrustClick" />
+                            </StackPanel>
                         </StackPanel>
+                    </StackPanel>
+                </ui:Card>
+
+                <!-- Firewall: sem a regra de entrada o Windows descarta a conexão do celular -->
+                <ui:Card Margin="0,0,0,12">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon x:Name="FirewallIcon" Symbol="ShieldError24" FontSize="22"
+                                           VerticalAlignment="Center" />
+                            <TextBlock Text="Acesso pela Wi-Fi" Margin="12,0,0,0"
+                                       FontSize="15" FontWeight="Medium" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock x:Name="FirewallText" Margin="0,8,0,8" Opacity="0.75" TextWrapping="Wrap"
+                                   Text="Verificando as regras do Firewall do Windows…" />
+                        <ui:Button x:Name="FirewallButton" Content="Liberar no Firewall"
+                                   Icon="{ui:SymbolIcon ShieldCheckmark24}"
+                                   Click="OnAllowFirewallClick" HorizontalAlignment="Left" />
                     </StackPanel>
                 </ui:Card>
 

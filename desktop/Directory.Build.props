@@ -12,4 +12,17 @@
     <AnalysisLevel>latest</AnalysisLevel>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
   </PropertyGroup>
+
+  <!--
+    Binário distribuído não deve carregar rastro da máquina de build: sem estas
+    propriedades, o caminho do .pdb (e com ele o usuário do Windows e a árvore de
+    pastas do desenvolvedor) fica gravado no cabeçalho do executável, legível com
+    qualquer editor hexadecimal.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildThisFileDirectory)=./</PathMap>
+  </PropertyGroup>
 </Project>

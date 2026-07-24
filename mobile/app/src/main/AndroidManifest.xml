@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Necessário para receber os anúncios em broadcast do desktop pelo Wi-Fi. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- WifiLock: mantém o rádio Wi-Fi ativo com a tela apagada, para a sessão não cair. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Serviço em foreground para manter a conexão viva enquanto ativo. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />

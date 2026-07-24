@@ -7,10 +7,14 @@ import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.Base64
 
+/** Resultado do pareamento: cifra da sessão e o vínculo que permite retomá-la depois. */
+data class PairingResult(val cipher: SessionCipher, val resumeKey: ByteArray, val deviceId: String)
+
 class PairingManager {
     private var keyAgreement: X25519KeyAgreement? = null
     private var nonce: ByteArray? = null
     private var sessionKey: ByteArray? = null
+    private var resumeKey: ByteArray? = null
 
     fun createRequest(): PairRequestPayload {
         cancel()
@@ -26,25 +30,33 @@ class PairingManager {
         require(code.matches(Regex("\\d{6}"))) { "O código de autenticação deve ter 6 dígitos." }
 
         val remoteKey = Base64.getDecoder().decode(response.pubKey)
-        sessionKey = requireNotNull(keyAgreement).deriveSessionKey(
-            remoteKey,
-            requireNotNull(nonce),
-            SESSION_KEY_INFO,
-        )
+        val agreement = requireNotNull(keyAgreement)
+        val salt = requireNotNull(nonce)
+        sessionKey = agreement.deriveSessionKey(remoteKey, salt, SESSION_KEY_INFO)
+        // Mesmo segredo ECDH, info HKDF distinta: chave independente da de sessão,
+        // guardada em disco para reconectar sem código nas próximas 72h.
+        resumeKey = agreement.deriveSessionKey(remoteKey, salt, ResumeHandshake.RESUME_KEY_INFO)
         return PairConfirmPayload(code)
     }
 
-    fun complete(): SessionCipher {
+    fun complete(): PairingResult {
         val key = requireNotNull(sessionKey) { "O handshake ainda não derivou uma chave de sessão." }
-        return SessionCipher(key.copyOf()).also { cancel() }
+        val resume = requireNotNull(resumeKey) { "O handshake ainda não derivou uma chave de retomada." }
+        return PairingResult(
+            cipher = SessionCipher(key.copyOf()),
+            resumeKey = resume.copyOf(),
+            deviceId = ResumeHandshake.computeDeviceId(resume),
+        ).also { cancel() }
     }
 
     fun cancel() {
         nonce?.fill(0)
         sessionKey?.fill(0)
+        resumeKey?.fill(0)
         keyAgreement = null
         nonce = null
         sessionKey = null
+        resumeKey = null
     }
 
     companion object {

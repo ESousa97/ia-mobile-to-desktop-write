@@ -45,12 +45,20 @@ Modelo simplificado no estilo STRIDE para o ClipBridge, focado na fase local-fir
 - A descoberta UDP responde a qualquer `clipbridge.discover.v1` na LAN; um atacante pode anunciar um servidor falso. O mobile conecta ao primeiro respondedor — não há verificação de identidade do host antes do pareamento.
 - Para redes hostis, recomenda-se confinamento por firewall e evolução futura para PAKE (ex.: SPAKE2) ou retorno a verificação out-of-band (QR + fingerprint).
 
+## Limites conhecidos da reconexão automática
+
+- A chave de retomada persiste **72h desde a última conexão** (renovada a cada retomada). Nesse período, quem conseguir **ler o armazenamento protegido dos dois lados** reconecta sem código: no Windows exige a mesma conta de usuário na mesma máquina (DPAPI); no Android, a chave do AndroidKeyStore, que não sai do aparelho. Um backup ou uma cópia do arquivo, isoladamente, não bastam.
+- A janela é um compromisso deliberado: sem ela, toda queda de Wi-Fi ou tela apagada exigiria digitar um código novo. Quem preferir o comportamento antigo pode revogar os vínculos a qualquer momento no desktop — as sessões ativas caem junto.
+- O `deviceId` trafega em claro no `session.resume`. Ele não revela a chave de retomada, mas permite a um observador na LAN **correlacionar reconexões do mesmo par** ao longo do tempo.
+- Um atacante que conheça o `deviceId` não consegue retomar: as provas HMAC e a cifra da sessão dependem da chave de retomada, e o handshake é recusado com `resume.denied`.
+
 ## Decisões de segurança que reduzem risco por design
 
 - **Sem nuvem:** elimina toda uma classe de ameaças (conta comprometida, servidor invadido, retenção de dados por terceiros).
 - **Digitação nunca é remota:** o recurso de "digitar o texto copiado" é disparado por hotkey **local**; um par remoto não consegue forçar o host a digitar/executar nada.
-- **Efemeridade de chaves:** forward secrecy limita o impacto de uma chave comprometida.
-- **Revogação simples:** o usuário remove um dispositivo pareado na UI e as chaves são invalidadas.
+- **Efemeridade de chaves:** forward secrecy limita o impacto de uma chave comprometida — inclusive nas retomadas, que trocam chaves X25519 novas a cada reconexão.
+- **Confiança que expira sozinha:** o vínculo de reconexão automática caduca em 72h sem uso, sem depender de ação do usuário.
+- **Revogação simples:** o usuário revoga os dispositivos na UI do desktop; as chaves são apagadas e as sessões em curso caem.
 
 ## Fora de escopo (nesta fase)
 

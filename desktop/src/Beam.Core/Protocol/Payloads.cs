@@ -9,6 +9,15 @@ public sealed record PairResponsePayload(string PubKey);
 
 public sealed record PairConfirmPayload(string Code);
 
+/// <summary>Pedido de retomada: vínculo, chave efêmera nova e nonce do celular.</summary>
+public sealed record SessionResumePayload(string DeviceId, string PubKey, string Nonce);
+
+/// <summary>Resposta do desktop: chave efêmera, nonce e prova de posse da chave de retomada.</summary>
+public sealed record SessionResumedPayload(string PubKey, string Nonce, string Proof);
+
+/// <summary>Prova do celular, cifrada com a chave de sessão recém-derivada.</summary>
+public sealed record SessionResumeConfirmPayload(string Proof);
+
 public sealed record ClipboardTextPayload(string Text, string Mime = "text/plain; charset=utf-8");
 
 public sealed record ClipboardImagePayload(string BlobId, string Mime, int Width, int Height);
