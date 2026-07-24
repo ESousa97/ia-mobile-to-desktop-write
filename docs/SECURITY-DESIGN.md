@@ -35,9 +35,13 @@ O ClipBridge trata a área de transferência — que frequentemente contém senh
 - Após **5 tentativas inválidas**, o convite é invalidado e um novo código deve ser gerado no desktop.
 - **Limite conhecido:** o código de 6 dígitos não autentica a chave pública do desktop fora de banda (diferente do esquema anterior por QR+fingerprint). O modelo assume LAN semiconfiável; veja [`THREAT-MODEL.md`](THREAT-MODEL.md).
 
-### Sessões
-- Após pareado, o dispositivo guarda a chave pública do par (**TOFU** — trust on first use) e um identificador de dispositivo.
-- Reconexões usam as chaves persistidas; um par pode ser **revogado** a qualquer momento na UI do desktop.
+### Sessões e reconexão automática
+- No pareamento por código, além da chave de sessão, os dois lados derivam do **mesmo segredo ECDH** uma **chave de retomada** de longa duração (`HKDF` com info distinta — `clipbridge-v1-resume`). Ela nunca trafega.
+- O identificador do vínculo (`deviceId`) é `HMAC-SHA256(chaveDeRetomada, "clipbridge-v1-device-id")` truncado: os dois lados chegam ao mesmo valor sem trocá-lo, e ele não revela a chave.
+- **Validade: 72 horas contadas a partir da última conexão bem-sucedida** — cada retomada renova a janela nos dois lados. Vencida, só um novo código restabelece o vínculo.
+- Na reconexão, o `session.resume` traz uma chave X25519 **efêmera nova**: a chave de sessão é `HKDF(ECDH ‖ chaveDeRetomada)`. O ECDH efêmero preserva o *forward secrecy* (uma retomada gravada hoje não é decifrável nem com a chave de retomada vazada amanhã) e a chave de retomada autentica os dois lados, com provas HMAC em ambas as direções.
+- **Em repouso:** no Windows, DPAPI com escopo do usuário atual (`%LOCALAPPDATA%\Beam\trusted-devices.bin` — ilegível em outra conta ou máquina); no Android, AES-GCM com chave do AndroidKeyStore, fora do backup.
+- **Revogação:** o botão "Revogar dispositivos" no desktop apaga todos os vínculos e derruba as sessões em curso; a próxima retomada é recusada com `resume.denied` e o celular apaga a cópia local.
 - Rate limiting por sessão para mitigar flood/abuso.
 
 ## 4. Menor privilégio

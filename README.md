@@ -57,7 +57,17 @@ Deeper material lives under `docs/`:
 - [Security design](docs/SECURITY-DESIGN.md)
 - [Threat model](docs/THREAT-MODEL.md)
 
-Default ports: WebSocket `8787`, UDP discovery `8788`.
+Default ports: WebSocket `8787`, UDP discovery `8788`, UDP announce `8789`.
+
+### Connecting over Wi-Fi
+
+Both devices must sit on the same Wi-Fi network. On first run:
+
+1. Open the desktop window and check the **"Acesso pela Wi-Fi"** card — it verifies the Windows Firewall inbound rules and creates them on demand (UAC prompt). Without them Windows silently drops the phone's connection, especially on networks classified as "Public".
+2. The phone finds the desktop by UDP broadcast, in both directions (probe and announce), so a firewall blocking one direction is not fatal.
+3. If discovery still fails — client isolation, guest VLANs, or a router that filters broadcast — use **"Informar IP manualmente"** on the phone and type the `ip:port` shown in the desktop window. Pairing and sync work the same way.
+
+You type the pairing code once. After that the phone reconnects on its own — after a Wi-Fi drop, a reboot, or the desktop being switched off — for **72 hours from the last successful connection**, and every reconnection renews that window. Revoke it any time with **"Revogar dispositivos"** in the desktop window, which also drops live sessions. See [Security design](docs/SECURITY-DESIGN.md#sessões-e-reconexão-automática).
 
 ## Repository layout
 

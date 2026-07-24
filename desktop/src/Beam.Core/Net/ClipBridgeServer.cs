@@ -25,6 +25,7 @@ public sealed class ClipBridgeServer : IAsyncDisposable
 
     private readonly int _port;
     private readonly int _discoveryPort;
+    private readonly ITrustedDeviceStore? _trustStore;
     private readonly object _pairingLock = new();
     private readonly object _clientsLock = new();
     private readonly List<ClientSession> _clients = [];
@@ -32,8 +33,10 @@ public sealed class ClipBridgeServer : IAsyncDisposable
     private CancellationTokenSource? _cts;
     private Task? _acceptLoop;
     private Task? _discoveryLoop;
+    private Task? _announceLoop;
     private PairingCoordinator? _pairing;
     private UdpClient? _discoverySocket;
+    private UdpClient? _announceSocket;
     private volatile bool _running;
 
     /// <summary>Disparado quando um envelope é recebido de um cliente.</summary>
@@ -49,6 +52,20 @@ public sealed class ClipBridgeServer : IAsyncDisposable
     public event EventHandler<BlobTransferCompleted>? BlobCompleted;
 
     public bool IsRunning => _running;
+
+    /// <summary>Porta TCP em que o servidor WebSocket escuta.</summary>
+    public int Port => _port;
+
+    /// <summary>Porta UDP das sondas de descoberta enviadas pelo celular.</summary>
+    public int DiscoveryPort => _discoveryPort;
+
+    /// <summary>
+    /// Endereços <c>ip:porta</c> pelos quais o celular pode conectar manualmente,
+    /// quando a descoberta automática não passa (rede com isolamento de clientes,
+    /// VLANs separadas ou broadcast filtrado pelo roteador).
+    /// </summary>
+    public IReadOnlyList<string> ConnectionEndpoints =>
+        NetworkInfo.GetLanAddresses().Select(address => $"{address.Address}:{_port}").ToList();
 
     /// <summary>Número de clientes com sessão segura ativa.</summary>
     public int SecureClientCount
@@ -122,10 +139,18 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         }
     }
 
-    public ClipBridgeServer(int port = ProtocolInfo.DefaultPort, int discoveryPort = ProtocolInfo.DiscoveryPort)
+    /// <param name="trustStore">
+    /// Registro dos celulares já pareados. Sem ele, o desktop continua funcionando,
+    /// mas toda reconexão exige um novo código de pareamento.
+    /// </param>
+    public ClipBridgeServer(
+        int port = ProtocolInfo.DefaultPort,
+        int discoveryPort = ProtocolInfo.DiscoveryPort,
+        ITrustedDeviceStore? trustStore = null)
     {
         _port = port;
         _discoveryPort = discoveryPort;
+        _trustStore = trustStore;
     }
 
     public void Start()
@@ -153,6 +178,56 @@ public sealed class ClipBridgeServer : IAsyncDisposable
             // Porta de descoberta em uso (ex.: outra instância): o servidor TCP
             // continua funcional; apenas a descoberta automática fica indisponível.
             _discoverySocket = null;
+        }
+
+        try
+        {
+            // Anúncio periódico em broadcast: permite ao celular achar o desktop
+            // mesmo quando o firewall do Windows (perfil Público, comum em Wi-Fi)
+            // bloqueia a sonda UDP de entrada na porta de descoberta.
+            _announceSocket = new UdpClient { EnableBroadcast = true };
+            _announceLoop = Task.Run(() => AnnounceLoopAsync(_cts.Token));
+        }
+        catch (SocketException)
+        {
+            _announceSocket = null;
+        }
+    }
+
+    /// <summary>Quantidade de celulares que hoje podem reconectar sem código.</summary>
+    public int TrustedDeviceCount => _trustStore?.Count ?? 0;
+
+    /// <summary>
+    /// Revoga a reconexão automática de todos os celulares e derruba as sessões
+    /// em curso — a próxima retomada é recusada e volta a exigir código.
+    /// </summary>
+    public async Task RevokeTrustedDevicesAsync(CancellationToken ct = default)
+    {
+        _trustStore?.ForgetAll();
+
+        List<ClientSession> sessions;
+        lock (_clientsLock)
+        {
+            sessions = [.. _clients];
+        }
+
+        foreach (var session in sessions)
+        {
+            session.IsSecure = false;
+            if (session.Socket.State != WebSocketState.Open)
+            {
+                continue;
+            }
+
+            try
+            {
+                await session.Socket.CloseAsync(
+                    WebSocketCloseStatus.NormalClosure, "trust revoked", ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is WebSocketException or IOException or ObjectDisposedException)
+            {
+                // Sessão já morta: nada a encerrar.
+            }
         }
     }
 
@@ -205,7 +280,7 @@ public sealed class ClipBridgeServer : IAsyncDisposable
                     continue;
                 }
 
-                var response = Encoding.UTF8.GetBytes($"clipbridge.announce.v1:{_port}");
+                var response = Encoding.UTF8.GetBytes(ProtocolInfo.BuildAnnounce(_port));
                 await socket.SendAsync(response, request.RemoteEndPoint, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -219,6 +294,43 @@ public sealed class ClipBridgeServer : IAsyncDisposable
             catch (SocketException)
             {
                 // Falha transitória de rede; continua ouvindo.
+            }
+        }
+    }
+
+    private async Task AnnounceLoopAsync(CancellationToken ct)
+    {
+        var socket = _announceSocket ?? throw new InvalidOperationException("Anúncio não inicializado.");
+        var payload = Encoding.UTF8.GetBytes(ProtocolInfo.BuildAnnounce(_port));
+        while (!ct.IsCancellationRequested)
+        {
+            foreach (var target in NetworkInfo.GetBroadcastAddresses())
+            {
+                try
+                {
+                    await socket.SendAsync(payload, new IPEndPoint(target, ProtocolInfo.AnnouncePort), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+                catch (SocketException)
+                {
+                    // Interface sem rota de broadcast; tenta as demais.
+                }
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
             }
         }
     }
@@ -343,7 +455,7 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         if (envelope.Type == MessageType.PairRequest)
         {
             session.Cipher?.Dispose();
-            session.Cipher = await HandlePairRequestAsync(socket, envelope, ct).ConfigureAwait(false);
+            session.Cipher = await HandlePairRequestAsync(session, socket, envelope, ct).ConfigureAwait(false);
             return;
         }
 
@@ -353,6 +465,32 @@ public sealed class ClipBridgeServer : IAsyncDisposable
                 socket, envelope, session.Cipher, ct).ConfigureAwait(false);
             if (session.IsSecure)
             {
+                RememberTrust(session);
+                SecureSessionEstablished?.Invoke(this, EventArgs.Empty);
+            }
+
+            return;
+        }
+
+        if (envelope.Type == MessageType.SessionResume)
+        {
+            session.Cipher?.Dispose();
+            session.Cipher = await HandleResumeRequestAsync(session, socket, envelope, ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (envelope.Type == MessageType.SessionResumeConfirm)
+        {
+            session.IsSecure = await HandleResumeConfirmationAsync(session, socket, envelope, ct).ConfigureAwait(false);
+            if (session.IsSecure)
+            {
+                // Cada conexão bem-sucedida empurra o vencimento para frente:
+                // a janela de 72h conta da última conexão, não do pareamento.
+                if (session.TrustedDeviceId is { } deviceId)
+                {
+                    _trustStore?.Renew(deviceId);
+                }
+
                 SecureSessionEstablished?.Invoke(this, EventArgs.Empty);
             }
 
@@ -525,7 +663,144 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         }
     }
 
-    private async Task<SessionCipher?> HandlePairRequestAsync(WebSocket socket, Envelope envelope, CancellationToken ct)
+    /// <summary>
+    /// Persiste o vínculo recém-criado: a partir daqui o celular reconecta sem
+    /// código enquanto a confiança valer.
+    /// </summary>
+    private void RememberTrust(ClientSession session)
+    {
+        var resumeKey = session.PendingResumeKey;
+        if (_trustStore is null || resumeKey is null)
+        {
+            return;
+        }
+
+        var deviceId = ResumeHandshake.ComputeDeviceId(resumeKey);
+        _trustStore.Remember(deviceId, resumeKey);
+        session.TrustedDeviceId = deviceId;
+    }
+
+    /// <summary>
+    /// Retomada: valida o vínculo, mistura um ECDH efêmero novo com a chave de
+    /// retomada e devolve a prova de que este desktop é mesmo o par confiado.
+    /// </summary>
+    private async Task<SessionCipher?> HandleResumeRequestAsync(
+        ClientSession session,
+        WebSocket socket,
+        Envelope envelope,
+        CancellationToken ct)
+    {
+        var request = envelope.PayloadAs<SessionResumePayload>();
+        var trusted = request is null ? null : _trustStore?.Find(request.DeviceId);
+        if (request is null || trusted is null)
+        {
+            // Vínculo desconhecido ou vencido: o celular deve refazer o pareamento.
+            await SendAsync(socket, Envelope.Create(
+                MessageType.Error,
+                new ErrorPayload("resume.denied", "Vínculo desconhecido ou expirado — refaça o pareamento.")), ct).ConfigureAwait(false);
+            return null;
+        }
+
+        try
+        {
+            var clientNonce = Convert.FromBase64String(request.Nonce);
+            if (clientNonce.Length != ResumeHandshake.NonceSizeBytes)
+            {
+                throw new ArgumentException("Nonce de retomada com tamanho inválido.");
+            }
+
+            var serverNonce = RandomNumberGenerator.GetBytes(ResumeHandshake.NonceSizeBytes);
+            var salt = ResumeHandshake.BuildSalt(clientNonce, serverNonce);
+
+            using var keyAgreement = new X25519KeyAgreement();
+            var ecdhKey = keyAgreement.DeriveSessionKey(
+                Convert.FromBase64String(request.PubKey), salt, ResumeHandshake.EcdhSessionInfo);
+
+            byte[] sessionKey;
+            try
+            {
+                sessionKey = ResumeHandshake.DeriveSessionKey(ecdhKey, trusted.ResumeKey, salt);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(ecdhKey);
+            }
+
+            var cipher = new SessionCipher(sessionKey);
+            CryptographicOperations.ZeroMemory(sessionKey);
+
+            session.TrustedDeviceId = trusted.DeviceId;
+            session.ExpectedClientProof = ResumeHandshake.ClientProof(trusted.ResumeKey, salt);
+
+            await SendAsync(socket, Envelope.Create(
+                MessageType.SessionResumed,
+                new SessionResumedPayload(
+                    Convert.ToBase64String(keyAgreement.PublicKey.Span),
+                    Convert.ToBase64String(serverNonce),
+                    Convert.ToBase64String(ResumeHandshake.ServerProof(trusted.ResumeKey, salt)))), ct).ConfigureAwait(false);
+            return cipher;
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or CryptographicException)
+        {
+            await SendAsync(socket, Envelope.Create(
+                MessageType.Error,
+                new ErrorPayload("resume.denied", "Pedido de retomada inválido.")), ct).ConfigureAwait(false);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Fecha a retomada: a prova do celular chega cifrada com a chave recém-derivada,
+    /// então decifrar já demonstra posse — o HMAC confirma em tempo constante.
+    /// </summary>
+    private async Task<bool> HandleResumeConfirmationAsync(
+        ClientSession session,
+        WebSocket socket,
+        Envelope envelope,
+        CancellationToken ct)
+    {
+        var expected = session.ExpectedClientProof;
+        if (session.Cipher is null || expected is null)
+        {
+            await SendAsync(socket, Envelope.Create(
+                MessageType.Error,
+                new ErrorPayload("resume.denied", "Envie session.resume antes de confirmar.")), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        if (!SecureEnvelopeCodec.TryDecrypt(envelope, session.Cipher, out var decrypted) ||
+            decrypted.PayloadAs<SessionResumeConfirmPayload>() is not { } confirmation ||
+            !TryVerifyProof(confirmation.Proof, expected))
+        {
+            session.ExpectedClientProof = null;
+            await SendAsync(socket, Envelope.Create(
+                MessageType.Error,
+                new ErrorPayload("resume.denied", "Prova de retomada inválida.")), ct).ConfigureAwait(false);
+            return false;
+        }
+
+        session.ExpectedClientProof = null;
+        await SendAsync(socket, Envelope.Create(MessageType.Ack, new AckPayload(envelope.Id)), ct).ConfigureAwait(false);
+        return true;
+    }
+
+    private static bool TryVerifyProof(string suppliedBase64, byte[] expected)
+    {
+        try
+        {
+            return CryptographicOperations.FixedTimeEquals(Convert.FromBase64String(suppliedBase64), expected);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<SessionCipher?> HandlePairRequestAsync(
+        ClientSession session,
+        WebSocket socket,
+        Envelope envelope,
+        CancellationToken ct)
     {
         PairingCoordinator? pairing;
         lock (_pairingLock)
@@ -546,6 +821,9 @@ public sealed class ClipBridgeServer : IAsyncDisposable
             var request = envelope.PayloadAs<PairRequestPayload>()
                 ?? throw new ArgumentException("Pedido de pareamento sem payload.");
             var sessionCipher = new SessionCipher(pairing.DeriveSessionKey(request));
+            // Guardada só na memória da conexão até o código ser aceito — um
+            // pedido não confirmado nunca vira vínculo persistido.
+            session.PendingResumeKey = pairing.DeriveResumeKey(request);
             await SendAsync(socket, Envelope.Create(MessageType.PairResponse, pairing.CreateResponse()), ct).ConfigureAwait(false);
             return sessionCipher;
         }
@@ -608,6 +886,8 @@ public sealed class ClipBridgeServer : IAsyncDisposable
         await _cts.CancelAsync().ConfigureAwait(false);
         _discoverySocket?.Dispose();
         _discoverySocket = null;
+        _announceSocket?.Dispose();
+        _announceSocket = null;
         _listener?.Stop();
         _listener = null;
 
@@ -628,6 +908,18 @@ public sealed class ClipBridgeServer : IAsyncDisposable
             try
             {
                 await _discoveryLoop.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Ignorado no shutdown.
+            }
+        }
+
+        if (_announceLoop is not null)
+        {
+            try
+            {
+                await _announceLoop.ConfigureAwait(false);
             }
             catch
             {

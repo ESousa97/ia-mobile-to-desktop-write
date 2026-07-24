@@ -12,6 +12,11 @@ public static class MessageType
     public const string PairResponse = "pair.response";
     public const string PairConfirm = "pair.confirm";
 
+    /// <summary>Retomada sem código, com a chave de retomada de um pareamento anterior.</summary>
+    public const string SessionResume = "session.resume";
+    public const string SessionResumed = "session.resumed";
+    public const string SessionResumeConfirm = "session.resume.confirm";
+
     public const string ClipboardText = "clipboard.text";
     public const string ClipboardImage = "clipboard.image";
 

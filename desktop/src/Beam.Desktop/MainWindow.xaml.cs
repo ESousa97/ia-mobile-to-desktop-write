@@ -27,7 +27,12 @@ public partial class MainWindow : FluentWindow
     private readonly WindowsScreenCaptureService _screenCapture = new();
     private readonly WindowsKeyboardTypingService _typing = new();
     private readonly WindowsClipboardService _clipboard = new();
-    private readonly ClipBridgeServer _server = new();
+    // Vínculos de confiança em disco (DPAPI): o celular reconecta sozinho, sem
+    // novo código, enquanto a janela de 72h desde a última conexão não vencer.
+    private readonly ClipBridgeServer _server = new(
+        trustStore: new FileTrustedDeviceStore(
+            FileTrustedDeviceStore.DefaultPath,
+            new DpapiSecretProtector()));
     private readonly Dictionary<string, byte[]> _receivedBlobs = new(StringComparer.OrdinalIgnoreCase);
     // Dedup por conteúdo (última barreira contra loop de sync): texto normalizado
     // (fins de linha) e hash perceptual de imagem. Conteúdo igual ao último
@@ -92,13 +97,96 @@ public partial class MainWindow : FluentWindow
             StatusIcon.Symbol = SymbolRegular.PlugConnected24;
             StatusText.Text = "Servidor pronto para pareamento";
             GeneratePairingInvitation();
+            ShowConnectionEndpoints();
+            ShowTrustedDevices();
+            _ = RefreshFirewallStatusAsync();
+            StartupLog.Write(
+                $"Servidor iniciado na porta {_server.Port}; endereços: {string.Join(", ", _server.ConnectionEndpoints)}");
         }
         catch (Exception ex)
         {
             Log($"Falha ao iniciar o servidor: {ex.Message}");
+            StartupLog.Write($"Falha ao iniciar o servidor: {ex}");
+            StatusIcon.Symbol = SymbolRegular.ErrorCircle24;
+            StatusText.Text = "Falha ao iniciar o servidor — veja a atividade abaixo";
+            ShowWindow();
+            return;
         }
 
-        Hide();
+        // Some para a bandeja apenas quando já há celular pareado. Sem nenhum
+        // vínculo não há o que fazer em segundo plano, e esconder a janela deixaria
+        // o usuário sem o código, sem o endereço e sem o aviso do firewall.
+        if (_server.TrustedDeviceCount == 0)
+        {
+            ShowWindow();
+        }
+        else
+        {
+            Hide();
+        }
+    }
+
+    private void ShowWindow()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        ShowInTaskbar = true;
+        Activate();
+    }
+
+    /// <summary>Exibe os IPs da LAN — o celular usa um deles na conexão manual.</summary>
+    private void ShowConnectionEndpoints()
+    {
+        var endpoints = _server.ConnectionEndpoints;
+        if (endpoints.Count == 0)
+        {
+            AddressText.Text = "Sem rede — conecte o PC à mesma Wi-Fi do celular";
+            Log("Nenhuma interface de rede ativa: o celular não tem como alcançar este PC.");
+            return;
+        }
+
+        AddressText.Text = string.Join("\n", endpoints);
+        Log($"Escutando em {string.Join(", ", endpoints)}.");
+    }
+
+    private async Task RefreshFirewallStatusAsync()
+    {
+        var (allowed, blocked) = await Task.Run(() => (
+            FirewallService.AreRulesPresent(_server.Port, _server.DiscoveryPort),
+            FirewallService.HasBlockingRule()));
+
+        FirewallIcon.Symbol = allowed ? SymbolRegular.ShieldCheckmark24 : SymbolRegular.ShieldError24;
+        FirewallText.Text = (allowed, blocked) switch
+        {
+            (true, _) => "O Firewall do Windows já permite a conexão do celular nesta rede.",
+            // Bloqueio vence permissão: enquanto essa regra existir, nenhuma regra
+            // de porta faz efeito — daí a mensagem separada.
+            (false, true) => "O Firewall do Windows tem uma regra que BLOQUEIA o Beam — ela costuma ser criada " +
+                             "ao recusar o aviso \"Permitir acesso?\" na primeira execução, e tem prioridade sobre " +
+                             "qualquer permissão. Liberar remove esse bloqueio e cria as regras de entrada.",
+            (false, false) => "O Firewall do Windows pode estar bloqueando a conexão do celular. " +
+                              "Liberar cria uma regra de entrada para as portas do Beam (pede confirmação do Windows).",
+        };
+        FirewallButton.IsEnabled = !allowed;
+    }
+
+    private async void OnAllowFirewallClick(object sender, RoutedEventArgs e)
+    {
+        FirewallButton.IsEnabled = false;
+        var created = await Task.Run(() => FirewallService.TryCreateRules(
+            _server.Port, _server.DiscoveryPort, ProtocolInfo.AnnouncePort));
+
+        if (created)
+        {
+            Log("Regras de firewall criadas: o celular já pode conectar por esta rede.");
+        }
+        else
+        {
+            Log("Não foi possível criar as regras (elevação recusada). " +
+                $"Rode num terminal como administrador: {FirewallService.ManualCommand(_server.Port, _server.DiscoveryPort, ProtocolInfo.AnnouncePort)}");
+        }
+
+        await RefreshFirewallStatusAsync();
     }
 
     private void OnClipboardChanged(object? sender, ClipboardContent content)
@@ -276,6 +364,7 @@ public partial class MainWindow : FluentWindow
             StatusIcon.Symbol = SymbolRegular.CheckmarkCircle24;
             StatusText.Text = "✓ Dispositivo pareado — sincronização ativa";
             Log("Sessão segura estabelecida. Sync de área de transferência ativo.");
+            ShowTrustedDevices();
         });
     }
 
@@ -334,12 +423,33 @@ public partial class MainWindow : FluentWindow
 
     private void OnRefreshPairingClick(object sender, RoutedEventArgs e) => GeneratePairingInvitation();
 
+    private async void OnRevokeTrustClick(object sender, RoutedEventArgs e)
+    {
+        await _server.RevokeTrustedDevicesAsync();
+        Log("Reconexão automática revogada: o celular precisará de um novo código.");
+        GeneratePairingInvitation();
+        ShowTrustedDevices();
+    }
+
     private void GeneratePairingInvitation()
     {
         var invitation = _server.BeginPairing();
         PairingCodeText.Text = invitation.PairingCode;
         _trayIcon?.SetPairingCode(invitation.PairingCode);
         Log("Novo código de pareamento gerado.");
+    }
+
+    /// <summary>Quantos celulares hoje reconectam sozinhos, e por quanto tempo.</summary>
+    private void ShowTrustedDevices()
+    {
+        var count = _server.TrustedDeviceCount;
+        RevokeButton.IsEnabled = count > 0;
+        TrustText.Text = count switch
+        {
+            0 => "Nenhum celular com reconexão automática.",
+            1 => "1 celular reconecta sozinho por até 72h após a última conexão.",
+            _ => $"{count} celulares reconectam sozinhos por até 72h após a última conexão.",
+        };
     }
 
     private void CaptureScreenshot()

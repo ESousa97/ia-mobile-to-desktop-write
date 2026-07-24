@@ -20,6 +20,9 @@ data class HomeUiState(
     val isSecure: Boolean = false,
     val latestImage: ReceivedImage? = null,
     val isBeamKeyboardSelected: Boolean = false,
+    /** Vínculo válido: a reconexão é automática, sem código. */
+    val isResuming: Boolean = false,
+    val trustExpiresAt: Long? = null,
 )
 
 class ClipBridgeViewModel(application: Application) : AndroidViewModel(application) {
@@ -42,12 +45,15 @@ class ClipBridgeViewModel(application: Application) : AndroidViewModel(applicati
             isSecure = activity.isSecure,
             latestImage = image,
             isBeamKeyboardSelected = keyboardSelected,
+            isResuming = activity.isResuming,
+            trustExpiresAt = activity.trustExpiresAt,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 
     fun startDiscovery() = session.startDiscovery()
 
-    fun confirmPairing(code: String) = session.confirmPairing(code)
+    fun confirmPairing(code: String, manualAddress: String? = null) =
+        session.confirmPairing(code, manualAddress)
 
     fun refreshInputMethodStatus() {
         isBeamKeyboardSelected.value = BeamInputMethodService.isSelected(getApplication())

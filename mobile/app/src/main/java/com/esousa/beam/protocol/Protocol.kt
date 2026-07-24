@@ -11,8 +11,17 @@ object Protocol {
     const val VERSION = 1
     const val DEFAULT_PORT = 8787
     const val DISCOVERY_PORT = 8788
+    const val ANNOUNCE_PORT = 8789
     const val DEFAULT_CHUNK_SIZE = 64 * 1024
     const val MAX_BLOB_BYTES = 50L * 1024 * 1024
+    const val DISCOVERY_REQUEST = "clipbridge.discover.v1"
+    const val ANNOUNCE_PREFIX = "clipbridge.announce.v1:"
+
+    /**
+     * Terminador do anúncio. Sem ele, um datagrama cortado no meio dos dígitos
+     * (8787 → 878) passaria como porta válida e o app conectaria no lugar errado.
+     */
+    const val ANNOUNCE_SUFFIX = ";"
 }
 
 object MessageType {
@@ -20,6 +29,9 @@ object MessageType {
     const val PAIR_REQUEST = "pair.request"
     const val PAIR_RESPONSE = "pair.response"
     const val PAIR_CONFIRM = "pair.confirm"
+    const val SESSION_RESUME = "session.resume"
+    const val SESSION_RESUMED = "session.resumed"
+    const val SESSION_RESUME_CONFIRM = "session.resume.confirm"
     const val CLIPBOARD_TEXT = "clipboard.text"
     const val CLIPBOARD_IMAGE = "clipboard.image"
     const val SCREENSHOT = "screenshot"
@@ -51,6 +63,23 @@ data class PairResponsePayload(val pubKey: String)
 
 @Serializable
 data class PairConfirmPayload(val code: String)
+
+@Serializable
+data class SessionResumePayload(
+    val deviceId: String,
+    val pubKey: String,
+    val nonce: String,
+)
+
+@Serializable
+data class SessionResumedPayload(
+    val pubKey: String,
+    val nonce: String,
+    val proof: String,
+)
+
+@Serializable
+data class SessionResumeConfirmPayload(val proof: String)
 
 @Serializable
 data class AckPayload(val ackId: String)

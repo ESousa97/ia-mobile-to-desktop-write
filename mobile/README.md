@@ -43,6 +43,8 @@ app/src/main/java/com/esousa/clipbridge/
 | Permissão | Uso |
 |---|---|
 | `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE` | Conexão WebSocket e descoberta UDP na LAN |
+| `CHANGE_WIFI_MULTICAST_STATE` | `MulticastLock` — sem ele o Android descarta os broadcasts de anúncio do desktop |
+| `WAKE_LOCK` | `WifiLock` — mantém o rádio Wi-Fi ativo com a tela apagada, para a sessão não cair |
 | `FOREGROUND_SERVICE*`, `POST_NOTIFICATIONS` | Manter a conexão viva enquanto ativo |
 
 Nenhuma permissão de câmera, localização, contatos ou armazenamento amplo. Ver [`../docs/SECURITY-DESIGN.md`](../docs/SECURITY-DESIGN.md).
