@@ -1,6 +1,7 @@
 plugins {
+    // Desde o AGP 9 o suporte a Kotlin é embutido: aplicar
+    // 'org.jetbrains.kotlin.android' aqui passa a ser erro de configuração.
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -9,7 +10,11 @@ import java.util.Properties
 
 android {
     namespace = "com.esousa.beam"
-    compileSdk = 35
+    // AndroidX 2.11+ (lifecycle, navigation) exige compilar contra a API 36.
+    // targetSdk segue em 35 de propósito: subir o alvo aciona as mudanças de
+    // comportamento do Android 16 e pede uma revisão à parte do serviço em
+    // foreground e do edge-to-edge.
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.esousa.beam"
@@ -62,8 +67,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    // `kotlinOptions` saiu junto com o plugin externo; a configuração do Kotlin
+    // agora vive no bloco `kotlin { }` do próprio AGP.
+    kotlin {
+        jvmToolchain(17)
     }
 }
 
