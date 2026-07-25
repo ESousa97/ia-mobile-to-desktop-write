@@ -95,11 +95,13 @@ You type the pairing code once. After that the phone reconnects on its own — a
 │  ├─ app/
 │  ├─ keystore.properties.example
 │  └─ scripts/              release build helpers
+├─ scripts/                 build-release.ps1, clean.ps1 (whole-repo)
+├─ dist/                    Every release artifact lands here (gitignored)
 ├─ docs/                    Architecture, protocol, security
 └─ .github/workflows/       Desktop CI, Android CI, CodeQL, release on tag
 ```
 
-Local publish output (`desktop/publish/`, `desktop/publish-*/`, `desktop/dist/`) and binaries (`.exe`, `.pdb`, `.dll`, MSIX packages) are gitignored. Build artifacts are produced by scripts or CI—they are not committed.
+Every build artifact is collected in `dist/` at the repository root—nothing is written next to the sources. `dist/` and all binaries (`.exe`, `.msix`, `.apk`, `.aab`, `.pdb`, `.dll`) are gitignored: they are produced by the scripts or by CI, never committed.
 
 ## Getting started
 
@@ -137,22 +139,36 @@ For a signed release build, copy `keystore.properties.example` to `keystore.prop
 
 Note on elevation: Windows will not inject keystrokes from a non-elevated process into an elevated one, and it reports no error when it refuses — the log line says the text was typed and nothing appears. If the target app runs as Administrator, run Beam Desktop as Administrator as well.
 
-## Publishing the desktop build
+## Building a release
 
-Portable self-contained executable:
+One command builds everything and gathers it in `dist/`:
 
 ```powershell
-cd desktop/scripts
-./publish.ps1
-# Output: desktop/publish/Beam.exe
+./scripts/build-release.ps1
 ```
 
-MSIX layout (requires the Windows SDK tooling on the machine):
+```
+dist/
+├─ desktop/
+│  ├─ Beam-0.1.0-win-x64.exe            portable, self-contained, single file
+│  └─ Beam-0.1.0.0-x64-unsigned.msix    sign with SignTool before distributing
+├─ mobile/
+│  ├─ beam-0.1.0.apk                    signed release APK
+│  └─ beam-0.1.0.aab                    Play Store bundle
+└─ SHA256SUMS.txt
+```
+
+The script wipes `dist/` first, then removes every build leftover (`bin/`, `obj/`, `mobile/app/build/`) when it finishes, so binaries only ever exist under `dist/`. Useful switches: `-SkipMobile`, `-SkipDesktop`, `-SkipMsix` (portable `.exe` only), and `-KeepIntermediates` to keep the next build incremental.
+
+The MSIX step needs the Windows SDK (`MakeAppx.exe`) on the machine; without it the script warns and leaves the package layout in place. The mobile step needs `mobile/keystore.properties` (see [Run the Android app](#run-the-android-app)).
+
+Individual pieces, if you need just one:
 
 ```powershell
-cd desktop/scripts
-./package-msix.ps1
-# Output: desktop/dist/msix/
+./desktop/scripts/publish.ps1        # dist/desktop/Beam-<ver>-win-x64.exe
+./desktop/scripts/package-msix.ps1   # dist/desktop/Beam-<ver>-x64-unsigned.msix
+./mobile/scripts/build-release.ps1   # dist/mobile/beam-<ver>.apk + .aab
+./scripts/clean.ps1                  # drop build leftovers (-All also drops dist/)
 ```
 
 Tag a version (`v*`) to trigger [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds desktop artifacts and a debug Android APK and attaches them to a GitHub Release. Store signing for release APKs and MSIX certificates remains a manual follow-up (GitHub Secrets / signing cert); templates and Gradle wiring are already in place.
