@@ -112,8 +112,8 @@
                                        FontSize="15" FontWeight="Medium" VerticalAlignment="Center" />
                         </StackPanel>
                         <TextBlock Margin="0,8,0,8" Opacity="0.75" TextWrapping="Wrap"
-                                   Text="Atalho global Ctrl + F1 digita o texto da área de transferência caractere a caractere, como o teclado físico (útil onde Ctrl+V é bloqueado)." />
-                        <ui:Button x:Name="TypeButton" Content="Digitar em 3s" Icon="{ui:SymbolIcon Keyboard24}"
+                                   Text="Digita o texto da área de transferência caractere a caractere, como o teclado físico (útil onde Ctrl+V é bloqueado). Clique no botão, vá até o campo de destino e clique nele: a digitação começa sozinha quando o foco parar lá. Também dá para usar os atalhos globais Ctrl + F1 e Ctrl + Alt + B — mas o Citrix em tela cheia captura o teclado inteiro e nenhum atalho local chega até aqui." />
+                        <ui:Button x:Name="TypeButton" Content="Digitar no campo de destino" Icon="{ui:SymbolIcon Keyboard24}"
                                    Click="OnTypeClick" HorizontalAlignment="Left" />
                     </StackPanel>
                 </ui:Card>

@@ -36,8 +36,8 @@ ClipBridge.Core.Tests (xUnit)
 **ClipBridge.Desktop** (WPF + WPF-UI):
 - `WindowsClipboardService` — texto e PNG via `System.Windows.Clipboard`
 - `WindowsScreenCaptureService` — GDI `BitBlt` → PNG full-res
-- `WindowsKeyboardTypingService` — `SendInput` Unicode (`Ctrl+F1`, **somente local**)
-- `Win32HotkeyService` — atalhos globais `Ctrl+F` / `Ctrl+F1`
+- `WindowsKeyboardTypingService` — `SendInput` por scancode, com fallback Unicode (**somente local**)
+- `Win32HotkeyService` — atalhos globais `Ctrl+F`, `Ctrl+F1` e `Ctrl+Alt+B`
 - `TrayIconService` — minimiza para bandeja; servidor continua ativo
 - UI — código de pareamento, status, log de atividade
 
@@ -88,9 +88,19 @@ Hotkey → captura PNG full-res → blob cifrado → screenshot { blobId, … }
   → mobile exibe no visualizador com zoom/pan
 ```
 
-### 4. Digitação (`Ctrl+F1`)
+### 4. Digitação (`Ctrl+F1` / `Ctrl+Alt+B`)
 
 Disparada **apenas no desktop** por hotkey local — nunca por comando remoto (ver [`THREAT-MODEL.md`](THREAT-MODEL.md)).
+
+A injeção tem três níveis, do mais fiel ao hardware para o menos:
+
+1. **Scancode** (`KEYEVENTF_SCANCODE`) no layout da janela em foco, com os modificadores da tecla (Shift / AltGr como Alt direito estendido).
+2. **Tecla morta + letra base** (`´` + `a` → `á`), para acentos sem tecla própria no layout.
+3. **Unicode** (`KEYEVENTF_UNICODE`), para o que o layout não produz — emoji, por exemplo.
+
+O nível 1 existe por causa das sessões remotas. Citrix Workspace, RDP e similares leem o teclado no nível bruto e transmitem *scancode* pelo canal do protocolo; um evento Unicode chega como `VK_PACKET`, sem scancode, e o cliente não tem o que enviar. `Ctrl+Alt+B` existe pelo mesmo motivo: `Ctrl+F1` é atalho reservado do Citrix (`Ctrl+Alt+Del` na sessão) e é consumido pelo cliente antes do `WM_HOTKEY`.
+
+Em tela cheia o cliente captura o teclado inteiro e **nenhum** atalho global local dispara. Para esse caso existe o botão da janela, que arma a digitação em vez de contar um prazo fixo: o Beam observa o foco a cada 200 ms e digita quando ele fica 1,2 s parado em uma janela que não é do próprio processo (limite de 30 s). Um prazo fixo obrigaria o usuário a achar o campo contra o relógio e jogaria a área de transferência na janela errada quando ele não chegasse a tempo.
 
 ## Decisões de arquitetura (ADR resumido)
 

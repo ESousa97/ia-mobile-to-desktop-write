@@ -12,20 +12,30 @@ Local clipboard sync between Windows and Android—text and images, end to end, 
 
 Beam keeps the clipboard of a Windows PC and an Android phone in sync over your local network. Copy text or an image on one device and it appears on the other. There is no cloud relay, no account, and no third-party service in the path: traffic stays on your Wi‑Fi or LAN.
 
-The Windows app also exposes two global hotkeys for desktop-only workflows that do not rely on remote control:
+The Windows app also exposes global hotkeys for desktop-only workflows that do not rely on remote control:
 
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl + F` | Capture a full-resolution screenshot in the background and send it to the phone |
 | `Ctrl + F1` | Type the current clipboard text via simulated keystrokes instead of pasting |
+| `Ctrl + Alt + B` | Same typing action, for targets that reserve `Ctrl + F1` (Citrix) |
 
-Simulated typing exists for fields that block `Ctrl+V` (banking apps, some terminals, locked-down forms). Beam injects Unicode input character by character after you release the modifier keys.
+Simulated typing exists for fields that block `Ctrl+V` (banking apps, some terminals, locked-down forms). Beam types character by character after you release the modifier keys, sending real keyboard scan codes for the layout of the focused window, and falling back to dead-key composition (`´` + `a` → `á`) and then to Unicode injection for characters the layout has no key for.
+
+### Typing into Citrix, RDP and other remote sessions
+
+Remote-session clients read the keyboard at the raw level and forward *scan codes* over their protocol channel. A `KEYEVENTF_UNICODE` event has no scan code — it arrives as `VK_PACKET` — so those clients have nothing to forward and the text never reaches the remote session. That is why Beam types scan codes first.
+
+Two extra constraints apply to Citrix Workspace specifically:
+
+- `Ctrl + F1` is a [reserved Citrix hotkey](https://docs.citrix.com/en-us/citrix-workspace-app-for-windows/keyboard.html) that means `Ctrl+Alt+Del` inside the session. When the Citrix window has focus, the client consumes it before Windows delivers the hotkey to Beam. Use `Ctrl + Alt + B` instead.
+- In full-screen mode the client captures the whole keyboard, so *no* local global hotkey fires. Use the **"Digitar no campo de destino"** button in the Beam window: click it, switch to the session, and click the field. Beam waits for the focus to settle on a window that is not its own and types there — no countdown to race, and it never types into itself.
 
 ## Capabilities
 
 - Bidirectional clipboard sync for text and images
 - Full-resolution screenshots from the PC, with zoom and pan on the phone
-- Local keyboard injection on Windows (`Ctrl+F1`), never driven by a remote command
+- Local keyboard injection on Windows (`Ctrl+F1` / `Ctrl+Alt+B`), never driven by a remote command
 - End-to-end session encryption (X25519 key agreement, HKDF, AES-256-GCM)
 - Automatic discovery on the LAN via UDP broadcast—no manual IP entry for normal use
 - Pairing with a six-digit code shown on the desktop
@@ -123,9 +133,9 @@ For a signed release build, copy `keystore.properties.example` to `keystore.prop
 2. Start Beam on the phone. Join the same network, discover the desktop, and enter the code.
 3. On Android, open **Beam Keyboard** → **Configure**, enable the IME in system settings, and select it as the default input method. Android only allows the current IME to observe new clipboard copies while the app is in the background; this step is required for reliable phone-to-PC text sync.
 4. On the PC, press `Ctrl + F` to capture the screen and send it to the phone.
-5. Copy text on the phone. It should land on the Windows clipboard. Focus the destination field and press `Ctrl + F1`. Beam waits until `Ctrl` is released, then types the text as physical keyboard input (it does not paste).
+5. Copy text on the phone. It should land on the Windows clipboard. Focus the destination field and press `Ctrl + F1` (or `Ctrl + Alt + B`). Beam waits until `Ctrl` and `Alt` are released, then types the text as physical keyboard input (it does not paste).
 
-Note on elevation: Windows will not inject keystrokes from a non-elevated process into an elevated one. If the target app runs as Administrator, run Beam Desktop as Administrator as well.
+Note on elevation: Windows will not inject keystrokes from a non-elevated process into an elevated one, and it reports no error when it refuses — the log line says the text was typed and nothing appears. If the target app runs as Administrator, run Beam Desktop as Administrator as well.
 
 ## Publishing the desktop build
 

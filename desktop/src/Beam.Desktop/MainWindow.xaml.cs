@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using Beam.Core.Abstractions;
@@ -20,8 +21,17 @@ public partial class MainWindow : FluentWindow
     // Virtual-Key codes (Win32)
     private const uint VkF = 0x46;
     private const uint VkF1 = 0x70;
+    private const uint VkB = 0x42;
     private const int VkLControl = 0xA2;
     private const int VkRControl = 0xA3;
+    private const int VkLMenu = 0xA4;
+    private const int VkRMenu = 0xA5;
+
+    // Digitação armada pelo botão: com que frequência olhar o foco, por quanto
+    // tempo ele precisa ficar parado na janela de destino, e quando desistir.
+    private const int ArmedTypingPollMs = 200;
+    private const int ArmedTypingStableMs = 1_200;
+    private const int ArmedTypingTimeoutMs = 30_000;
 
     private readonly Win32HotkeyService _hotkeys = new();
     private readonly WindowsScreenCaptureService _screenCapture = new();
@@ -41,6 +51,10 @@ public partial class MainWindow : FluentWindow
     private ulong? _lastSyncedImageHash;
     private TrayIconService? _trayIcon;
     private bool _isExiting;
+    private DispatcherTimer? _armedTypingTimer;
+    private IntPtr _armedTargetWindow;
+    private int _armedStablePolls;
+    private int _armedElapsedPolls;
 
     public MainWindow()
     {
@@ -76,7 +90,15 @@ public partial class MainWindow : FluentWindow
             _hotkeys.Register(
                 HotkeyModifiers.Control | HotkeyModifiers.NoRepeat, VkF1, QueueClipboardTyping);
 
-            Log("Atalhos registrados: Ctrl+F (captura), Ctrl+F1 (digitar texto).");
+            // Ctrl + Alt + B → mesma digitação. Existe porque Ctrl+F1 é um atalho
+            // reservado do Citrix Workspace (equivale a Ctrl+Alt+Del na sessão),
+            // então o cliente o consome antes de o Windows entregar o WM_HOTKEY.
+            _hotkeys.Register(
+                HotkeyModifiers.Control | HotkeyModifiers.Alt | HotkeyModifiers.NoRepeat,
+                VkB,
+                QueueClipboardTyping);
+
+            Log("Atalhos registrados: Ctrl+F (captura), Ctrl+F1 e Ctrl+Alt+B (digitar texto).");
         }
         catch (Exception ex)
         {
@@ -389,16 +411,91 @@ public partial class MainWindow : FluentWindow
 
     private void OnCaptureClick(object sender, RoutedEventArgs e) => CaptureScreenshot();
 
+    /// <summary>
+    /// Arma a digitação em vez de disparar uma contagem fixa. Uma contagem de 3s
+    /// obriga o usuário a achar o campo de destino contra o relógio, e se ele não
+    /// chegar a tempo o texto da área de transferência vai parar na janela errada.
+    /// Aqui o Beam espera o usuário sair da própria janela e fixar o foco em
+    /// outra — é o mesmo gesto, sem pressa.
+    /// </summary>
     private void OnTypeClick(object sender, RoutedEventArgs e)
     {
-        Log("Digitando em 3s — clique no campo de destino…");
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        timer.Tick += (_, _) =>
+        if (_armedTypingTimer is not null)
         {
-            timer.Stop();
-            TypeClipboardText();
+            DisarmTyping();
+            Log("Digitação cancelada.");
+            return;
+        }
+
+        _armedTargetWindow = IntPtr.Zero;
+        _armedStablePolls = 0;
+        _armedElapsedPolls = 0;
+        TypeButton.Content = "Cancelar digitação";
+        Log("Digitação armada — clique no campo de destino e aguarde um instante.");
+
+        _armedTypingTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(ArmedTypingPollMs),
         };
-        timer.Start();
+        _armedTypingTimer.Tick += OnArmedTypingTick;
+        _armedTypingTimer.Start();
+    }
+
+    private void OnArmedTypingTick(object? sender, EventArgs e)
+    {
+        if (++_armedElapsedPolls * ArmedTypingPollMs > ArmedTypingTimeoutMs)
+        {
+            DisarmTyping();
+            Log("Digitação cancelada: nenhum campo de destino foi selecionado.");
+            return;
+        }
+
+        var foreground = GetForegroundWindow();
+
+        // Enquanto o foco for do próprio Beam, não há destino: digitar aqui
+        // jogaria o conteúdo da área de transferência dentro do log.
+        if (foreground == IntPtr.Zero || IsOwnWindow(foreground))
+        {
+            _armedTargetWindow = IntPtr.Zero;
+            _armedStablePolls = 0;
+            return;
+        }
+
+        // O foco precisa parar em uma janela e ficar lá: durante um Alt+Tab ou um
+        // clique na barra de tarefas ele passa por janelas intermediárias.
+        if (foreground != _armedTargetWindow)
+        {
+            _armedTargetWindow = foreground;
+            _armedStablePolls = 0;
+            return;
+        }
+
+        if (++_armedStablePolls * ArmedTypingPollMs < ArmedTypingStableMs)
+        {
+            return;
+        }
+
+        DisarmTyping();
+        TypeClipboardText();
+    }
+
+    private void DisarmTyping()
+    {
+        if (_armedTypingTimer is null)
+        {
+            return;
+        }
+
+        _armedTypingTimer.Stop();
+        _armedTypingTimer.Tick -= OnArmedTypingTick;
+        _armedTypingTimer = null;
+        TypeButton.Content = "Digitar no campo de destino";
+    }
+
+    private static bool IsOwnWindow(IntPtr hWnd)
+    {
+        GetWindowThreadProcessId(hWnd, out var processId);
+        return processId == (uint)Environment.ProcessId;
     }
 
     private void QueueClipboardTyping()
@@ -406,7 +503,7 @@ public partial class MainWindow : FluentWindow
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(25) };
         timer.Tick += (_, _) =>
         {
-            if (IsControlPressed())
+            if (IsHotkeyModifierPressed())
             {
                 return;
             }
@@ -417,9 +514,15 @@ public partial class MainWindow : FluentWindow
         timer.Start();
     }
 
-    private static bool IsControlPressed() =>
-        (GetAsyncKeyState(VkLControl) & 0x8000) != 0 ||
-        (GetAsyncKeyState(VkRControl) & 0x8000) != 0;
+    /// <summary>
+    /// Ctrl e Alt ainda pressionados transformam as letras digitadas em atalhos
+    /// no destino; a digitação só começa depois que o usuário solta os dois.
+    /// </summary>
+    private static bool IsHotkeyModifierPressed() =>
+        IsKeyDown(VkLControl) || IsKeyDown(VkRControl) ||
+        IsKeyDown(VkLMenu) || IsKeyDown(VkRMenu);
+
+    private static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 
     private void OnRefreshPairingClick(object sender, RoutedEventArgs e) => GeneratePairingInvitation();
 
@@ -493,24 +596,34 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private void TypeClipboardText()
+    private void TypeClipboardText() => _ = TypeClipboardTextAsync();
+
+    private async Task TypeClipboardTextAsync()
     {
+        // A leitura da área de transferência exige a thread da UI; a digitação
+        // não, e é ela que demora — um texto longo congelaria a janela.
         var content = _clipboard.GetCurrent();
-        if (content.Kind == ClipboardKind.Text && !string.IsNullOrEmpty(content.Text))
-        {
-            try
-            {
-                _typing.TypeText(content.Text);
-                Log($"Digitado: {content.Text.Length} caracteres.");
-            }
-            catch (Exception ex)
-            {
-                Log($"Falha ao digitar o texto: {ex.Message}");
-            }
-        }
-        else
+        if (content.Kind != ClipboardKind.Text || string.IsNullOrEmpty(content.Text))
         {
             Log("Nada de texto na área de transferência para digitar.");
+            return;
+        }
+
+        var text = content.Text;
+        var target = ForegroundWindowTitle();
+        try
+        {
+            var report = await Task.Run(() => _typing.TypeTextWithReport(text));
+            Log($"Digitado: {text.Length} caracteres em {target}.");
+            if (report.UnicodeFallbacks > 0)
+            {
+                Log($"{report.UnicodeFallbacks} caractere(s) sem tecla no layout atual foram " +
+                    "enviados como Unicode — sessões remotas (Citrix/RDP) podem ignorá-los.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"Falha ao digitar o texto: {ex.Message}");
         }
     }
 
@@ -542,6 +655,7 @@ public partial class MainWindow : FluentWindow
 
     private async void OnClosed(object? sender, EventArgs e)
     {
+        DisarmTyping();
         if (_trayIcon is not null)
         {
             _trayIcon.ExitRequested -= OnExitRequested;
@@ -558,6 +672,32 @@ public partial class MainWindow : FluentWindow
         await _server.DisposeAsync();
     }
 
+    /// <summary>
+    /// Título da janela que recebeu a digitação. No log, é o que diferencia
+    /// "não digitou" de "digitou na janela errada".
+    /// </summary>
+    private static string ForegroundWindowTitle()
+    {
+        var foreground = GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+        {
+            return "janela desconhecida";
+        }
+
+        var title = new StringBuilder(256);
+        var length = GetWindowText(foreground, title, title.Capacity);
+        return length > 0 ? $"\"{title}\"" : "janela sem título";
+    }
+
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int virtualKey);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 }
