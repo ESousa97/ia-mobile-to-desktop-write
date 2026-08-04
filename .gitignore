@@ -95,11 +95,13 @@ $RECYCLE.BIN/
 .claude/settings.local.json
 
 # ===== Builds locais / publish (não versionar binários) ====================
+# Todo artefato de release é reunido em /dist na raiz (veja scripts/build-release.ps1).
+/dist/
+# Diretórios de publish legados: mantidos aqui como rede de segurança para quem
+# rodar `dotnet publish -o` à mão fora do script.
 desktop/publish/
 desktop/publish-*/
 desktop/dist/
-# Artefatos finais reunidos por release (desktop + mobile)
-/dist/
 *.exe
 *.pdb
 *.dll

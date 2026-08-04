@@ -19,21 +19,15 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Publish portable exe
+      - name: Build desktop artifacts (exe + MSIX) into dist/
         shell: pwsh
-        run: ./desktop/scripts/publish.ps1
-
-      - name: Package MSIX layout
-        shell: pwsh
-        run: ./desktop/scripts/package-msix.ps1
+        run: ./scripts/build-release.ps1 -SkipMobile
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
         with:
           name: clipbridge-desktop
-          path: |
-            desktop/publish/Beam.exe
-            desktop/dist/msix/**
+          path: dist/desktop/**
 
   android:
     name: Android (debug APK)
@@ -70,7 +64,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Nomes carregam a versão (Beam-<ver>-win-x64.exe), então casamos por glob.
           files: |
-            artifacts/clipbridge-desktop/Beam.exe
+            artifacts/clipbridge-desktop/*.exe
+            artifacts/clipbridge-desktop/*.msix
             artifacts/clipbridge-android-debug/app-debug.apk
           generate_release_notes: true
