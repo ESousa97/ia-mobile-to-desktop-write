@@ -13,7 +13,7 @@ kotlinxCoroutines = "1.11.0"
 bouncyCastle = "1.78.1"
 junit = "4.13.2"
 androidxJunit = "1.2.1"
-espressoCore = "3.6.1"
+espressoCore = "3.7.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
